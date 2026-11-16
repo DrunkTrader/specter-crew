@@ -1,0 +1,16 @@
+{
+  "name": "specter-crew",
+  "version": "0.1.0",
+  "displayName": "Specter Crew",
+  "description": "A squad of Exorcist agents that investigate every production ghost in parallel and return one incident report.",
+  "author": "DrunkTrader",
+  "iconPath": "assets/icon.png",
+  "agents": ["agents/exorcism-lead.json", "agents/ghost-hunter.json"],
+  "skills": ["skills/exorcism"],
+  "tags": ["observability", "opentelemetry", "incident-response", "kiroween"],
+  "useCases": [
+    "When three services misbehave at once, ask exorcism-lead to hunt every ghost in parallel and read one ranked incident report",
+    "When a ghost-hunter finds a root cause, read its cited trace IDs and its Kiro fix spec before approving a PR",
+    "When an incident feels familiar, let the squad check Specter's incident memory before it investigates"
+  ]
+}
