@@ -36950,10 +36950,13 @@ function* exorcismStages(input2) {
   if (kind === "saturation") {
     evidence = win2.filter((s) => s.service === pick2.service).sort((a, b) => (b.saturation ?? 0) - (a.saturation ?? 0)).slice(0, 10);
     const own2 = win2.filter((s) => s.service === pick2.service).sort((a, b) => a.startMs - b.startMs);
-    const half = Math.floor(own2.length / 2);
-    const mean = (xs) => xs.length ? xs.reduce((t, s) => t + (s.saturation ?? 0), 0) / xs.length : 0;
-    const perMin = (mean(own2.slice(half)) - mean(own2.slice(0, half))) / (windowMs / 2 / 6e4) * 100;
-    const trend = perMin >= 1 ? `and rising ${perMin.toFixed(0)}%/min` : "and holding";
+    const n = own2.length;
+    const mt = own2.reduce((t, x) => t + x.startMs, 0) / Math.max(1, n);
+    const ms = own2.reduce((t, x) => t + (x.saturation ?? 0), 0) / Math.max(1, n);
+    const num = own2.reduce((t, x) => t + (x.startMs - mt) * ((x.saturation ?? 0) - ms), 0);
+    const den = own2.reduce((t, x) => t + (x.startMs - mt) ** 2, 0);
+    const perMin = den > 0 ? num / den * 6e4 * 100 : 0;
+    const trend = h.saturation >= 0.97 ? "and pinned at the ceiling" : perMin >= 1 ? `and rising ${perMin.toFixed(0)}%/min` : "and holding";
     sentence = `${pick2.service} is ${(h.saturation * 100).toFixed(0)}% saturated ${trend}, pushing p95 self-time to ${Math.round(h.p95SelfMs)}ms (${secs}s window).`;
   } else if (kind === "down") {
     evidence = win2.filter((s) => s.errorKind === "unavailable" && s.peerService === pick2.service);
@@ -37185,7 +37188,7 @@ var DESCRIPTIONS = {
   recall_incidents: "List remembered incidents, optionally for one service."
 };
 var rt = new Runtime({ faults: parseFaults(process.env.SPECTER_FAULTS, SHOP_MAP.services.map((x) => x.id), WARMUP_MS), memoryPath: process.env.SPECTER_MEMORY ?? ".specter/memory.json", ...process.env.SPECTER_JAEGER_URL ? { jaegerUrl: process.env.SPECTER_JAEGER_URL } : {} });
-var server = new McpServer({ name: "specter-mcp", version: "0.8.1" });
+var server = new McpServer({ name: "specter-mcp", version: "0.8.2" });
 for (const name of Object.keys(schemas)) {
   server.registerTool(name, { description: DESCRIPTIONS[name], inputSchema: schemas[name] }, async (args) => {
     try {
