@@ -36836,7 +36836,7 @@ var p95 = (xs) => {
 };
 function computeHealth(spans, map2, now, windowMs) {
   const win2 = spans.filter((s) => s.startMs >= now - windowMs && s.startMs < now);
-  const self = selfTimes(win2);
+  const self = selfTimes(spans);
   return map2.services.map((svc) => {
     const own2 = win2.filter((s) => s.service === svc.id);
     const unavailable = win2.filter((s) => s.errorKind === "unavailable" && s.peerService === svc.id).length;
@@ -36963,7 +36963,7 @@ function* exorcismStages(input2) {
     evidence = win2.filter((s) => s.service === pick2.service && s.errorKind === "own");
     sentence = `${pick2.service} fails ${(h.errorRate * 100).toFixed(0)}% of requests (${evidence.length} of ${h.samples} spans, "${evidence[0]?.errorMessage ?? "error"}") in the last ${secs}s.`;
   } else {
-    const self = selfTimes(win2);
+    const self = selfTimes(spans);
     evidence = win2.filter((s) => s.service === pick2.service).sort((a, b) => (self.get(b.spanId) ?? 0) - (self.get(a.spanId) ?? 0)).slice(0, 10);
     const base2 = map2.services.find((s) => s.id === pick2.service)?.baselineMs ?? 0;
     sentence = `${pick2.service} p95 self-time is ${Math.round(h.p95SelfMs)}ms against a ${base2}ms baseline (${h.latencyRatio.toFixed(1)}x) over the last ${secs}s.`;
@@ -37185,7 +37185,7 @@ var DESCRIPTIONS = {
   recall_incidents: "List remembered incidents, optionally for one service."
 };
 var rt = new Runtime({ faults: parseFaults(process.env.SPECTER_FAULTS, SHOP_MAP.services.map((x) => x.id), WARMUP_MS), memoryPath: process.env.SPECTER_MEMORY ?? ".specter/memory.json", ...process.env.SPECTER_JAEGER_URL ? { jaegerUrl: process.env.SPECTER_JAEGER_URL } : {} });
-var server = new McpServer({ name: "specter-mcp", version: "0.8.0" });
+var server = new McpServer({ name: "specter-mcp", version: "0.8.1" });
 for (const name of Object.keys(schemas)) {
   server.registerTool(name, { description: DESCRIPTIONS[name], inputSchema: schemas[name] }, async (args) => {
     try {
