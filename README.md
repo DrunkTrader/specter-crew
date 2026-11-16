@@ -16,3 +16,6 @@ The app ships a self-contained build of `specter-mcp` (`mcp/server.mjs`, Node 20
 Rebuild the bundle from the Specter repo: `node scripts/bundle-mcp.mjs ../specter-crew/mcp/server.mjs`.
 
 MIT licensed.
+
+## Author
+Built by DrunkTrader. Portfolio: https://drunktrader.dev. Contact: neerajrajputa786@gmail.com
