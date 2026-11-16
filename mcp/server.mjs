@@ -36929,18 +36929,22 @@ var SPOOK = {
   saturation: "The room is filling and nobody is bailing."
 };
 var uniq = (xs) => [...new Set(xs)];
-function diagnose(input2) {
+function* exorcismStages(input2) {
   const { spans, map: map2, now, windowMs, memory = [], apparitionId } = input2;
+  const secs = Math.round(windowMs / 1e3);
+  const win2 = spans.filter((s) => s.startMs >= now - windowMs && s.startMs < now);
+  yield { name: "Reading traces", detail: `${win2.length} spans from ${uniq(win2.map((s) => s.traceId)).length} traces in the last ${secs}s` };
   const health = computeHealth(spans, map2, now, windowMs);
   const all = apparitions(health);
   const chosen = [...all].filter((a) => !apparitionId || a.id === apparitionId).sort((a, b) => b.severity - a.severity)[0];
-  if (!chosen) return null;
+  if (!chosen) {
+    yield { name: "Correlating spans", detail: "no apparition found" };
+    return null;
+  }
   const pick2 = all.find((a) => a.kind === "flood" && a.service === chosen.service) ?? chosen;
-  const win2 = spans.filter((s) => s.startMs >= now - windowMs && s.startMs < now);
   const h = health.find((x) => x.service === pick2.service);
   if (!h) return null;
   const kind = KIND[pick2.kind];
-  const secs = Math.round(windowMs / 1e3);
   let sentence;
   let evidence;
   if (kind === "saturation") {
@@ -36966,11 +36970,22 @@ function diagnose(input2) {
   }
   const traceIds = uniq(evidence.map((s) => s.traceId)).slice(0, 3);
   const affected = uniq(win2.filter((s) => s.status === "error" && s.errorKind !== "own" || s.errorKind === "own" && s.service !== pick2.service).map((s) => s.service)).filter((s) => s !== pick2.service);
+  yield { name: "Correlating spans", detail: `${pick2.service} is the source; ${affected.length} other service${affected.length === 1 ? "" : "s"} affected` };
   const similar = findSimilar(memory, pick2.service, kind);
+  yield { name: "Searching memory", detail: similar ? `matched ${similar.id} (${similar.date})` : "no similar incident" };
   const confidence = h.samples + evidence.length >= 20 && pick2.severity >= 0.3 ? "high" : evidence.length >= 5 ? "medium" : "low";
   const full = `${sentence} ${SPOOK[kind]}`;
   const base = { service: pick2.service, kind, sentence: full, confidence, evidenceTraceIds: traceIds, affected, ...similar ? { similar } : {} };
-  return { ...base, fixSpec: renderFixSpec({ ...base, similar }) };
+  const fixSpec = renderFixSpec({ ...base, similar });
+  yield { name: "Writing fix spec", detail: `${fixSpec.split("\n").length} lines` };
+  return { ...base, fixSpec };
+}
+function diagnose(input2) {
+  const it = exorcismStages(input2);
+  for (; ; ) {
+    const r = it.next();
+    if (r.done) return r.value;
+  }
 }
 
 // packages/mcp/src/runtime.ts
@@ -37170,7 +37185,7 @@ var DESCRIPTIONS = {
   recall_incidents: "List remembered incidents, optionally for one service."
 };
 var rt = new Runtime({ faults: parseFaults(process.env.SPECTER_FAULTS, SHOP_MAP.services.map((x) => x.id), WARMUP_MS), memoryPath: process.env.SPECTER_MEMORY ?? ".specter/memory.json", ...process.env.SPECTER_JAEGER_URL ? { jaegerUrl: process.env.SPECTER_JAEGER_URL } : {} });
-var server = new McpServer({ name: "specter-mcp", version: "0.7.0" });
+var server = new McpServer({ name: "specter-mcp", version: "0.8.0" });
 for (const name of Object.keys(schemas)) {
   server.registerTool(name, { description: DESCRIPTIONS[name], inputSchema: schemas[name] }, async (args) => {
     try {
