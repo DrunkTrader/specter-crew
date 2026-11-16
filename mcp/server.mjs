@@ -36709,6 +36709,8 @@ function hexId(rng, bytes) {
 var SLOT_MS = 100;
 var DEFAULT_LATENCY_MS = 1200;
 var DEFAULT_ERROR_P = 0.6;
+var DEFAULT_LEAK_RAMP_S = 30;
+var clamp01 = (n) => Math.min(1, Math.max(0, n));
 var baselineOf = (map2, id) => map2.services.find((s) => s.id === id)?.baselineMs ?? 50;
 var faultOf = (faults, service, kind) => faults.find((f) => f.service === service && f.kind === kind);
 function run(ctx, node2, parent, startMs) {
@@ -36716,8 +36718,11 @@ function run(ctx, node2, parent, startMs) {
   const spanId = hexId(rng, 8);
   const latency = faultOf(faults, node2.service, "latency");
   const errors = faultOf(faults, node2.service, "errors");
-  const selfMs = baselineOf(map2, node2.service) * (0.8 + rng() * 0.4) + (latency ? (latency.magnitude ?? DEFAULT_LATENCY_MS) * (0.8 + rng() * 0.4) : 0);
-  const ownError = errors ? rng() < (errors.magnitude ?? DEFAULT_ERROR_P) : false;
+  const leak = faultOf(faults, node2.service, "leak");
+  const saturation = leak ? clamp01((startMs - (leak.startMs ?? 0)) / ((leak.magnitude ?? DEFAULT_LEAK_RAMP_S) * 1e3)) : 0.1 + rng() * 0.2;
+  const leakDelay = saturation > 0.6 ? (saturation - 0.6) / 0.4 * 800 * (0.8 + rng() * 0.4) : 0;
+  const selfMs = baselineOf(map2, node2.service) * (0.8 + rng() * 0.4) + (latency ? (latency.magnitude ?? DEFAULT_LATENCY_MS) * (0.8 + rng() * 0.4) : 0) + leakDelay;
+  const ownError = (errors ? rng() < (errors.magnitude ?? DEFAULT_ERROR_P) : false) || saturation > 0.9 && rng() < 0.3;
   let cursor = startMs + selfMs / 2;
   const children = [];
   let childFailure;
@@ -36748,6 +36753,7 @@ function run(ctx, node2, parent, startMs) {
     startMs,
     durationMs: endMs - startMs,
     status: failed ? "error" : "ok",
+    saturation,
     ...ownError ? { errorKind: "own", errorMessage: "internal error: upstream returned 500" } : childFailure?.kind === "unavailable" ? { errorKind: "unavailable", errorMessage: `connection refused: ${childFailure.service}`, peerService: childFailure.service } : childFailure ? { errorKind: "upstream", errorMessage: `upstream ${childFailure.service} failed` } : {}
   };
   return { spans: [span, ...children], endMs, failed };
@@ -36815,8 +36821,9 @@ function layoutHouse(map2) {
 var FOG_RATIO = 2;
 var GHOST_RATE = 0.05;
 var DOOR_RATE = 0.5;
-var clamp01 = (n) => Math.min(1, Math.max(0, n));
-var severityOf = (latencyRatio, errorRate, unavailableRate) => Math.max(clamp01((latencyRatio - 1.5) / 4.5), clamp01(errorRate / 0.5), clamp01(unavailableRate / 0.9));
+var FLOOD_LEVEL = 0.6;
+var clamp012 = (n) => Math.min(1, Math.max(0, n));
+var severityOf = (latencyRatio, errorRate, unavailableRate, saturation = 0) => Math.max(clamp012((latencyRatio - 1.5) / 4.5), clamp012(errorRate / 0.5), clamp012(unavailableRate / 0.9), clamp012((saturation - 0.5) / 0.4));
 function selfTimes(spans) {
   const childSum = /* @__PURE__ */ new Map();
   for (const s of spans) if (s.parentSpanId) childSum.set(s.parentSpanId, (childSum.get(s.parentSpanId) ?? 0) + s.durationMs);
@@ -36838,17 +36845,19 @@ function computeHealth(spans, map2, now, windowMs) {
     const latencyRatio = own2.length ? p / svc.baselineMs : 0;
     const errorRate = own2.length ? own2.filter((s) => s.errorKind === "own").length / own2.length : 0;
     const unavailableRate = reached ? unavailable / reached : 0;
-    const severity = severityOf(latencyRatio, errorRate, unavailableRate);
+    const saturation = own2.length ? own2.reduce((sum, s) => sum + (s.saturation ?? 0), 0) / own2.length : 0;
+    const severity = severityOf(latencyRatio, errorRate, unavailableRate, saturation);
     const state = reached === 0 ? "quiet" : severity > 0.05 ? "haunted" : "calm";
-    return { service: svc.id, samples: own2.length, p95SelfMs: p, latencyRatio, errorRate, unavailableRate, severity, state };
+    return { service: svc.id, samples: own2.length, p95SelfMs: p, latencyRatio, errorRate, unavailableRate, saturation, severity, state };
   });
 }
 function apparitions(health) {
   const out = [];
   for (const h of health) {
-    if (h.unavailableRate >= DOOR_RATE) out.push({ id: `locked-door:${h.service}`, kind: "locked-door", service: h.service, severity: clamp01(h.unavailableRate / 0.9) });
-    if (h.errorRate >= GHOST_RATE) out.push({ id: `ghost:${h.service}`, kind: "ghost", service: h.service, severity: clamp01(h.errorRate / 0.5) });
-    if (h.latencyRatio >= FOG_RATIO) out.push({ id: `fog:${h.service}`, kind: "fog", service: h.service, severity: clamp01((h.latencyRatio - 1.5) / 4.5) });
+    if (h.unavailableRate >= DOOR_RATE) out.push({ id: `locked-door:${h.service}`, kind: "locked-door", service: h.service, severity: clamp012(h.unavailableRate / 0.9) });
+    if (h.errorRate >= GHOST_RATE) out.push({ id: `ghost:${h.service}`, kind: "ghost", service: h.service, severity: clamp012(h.errorRate / 0.5) });
+    if (h.saturation >= FLOOD_LEVEL) out.push({ id: `flood:${h.service}`, kind: "flood", service: h.service, severity: clamp012((h.saturation - 0.5) / 0.4) });
+    if (h.latencyRatio >= FOG_RATIO) out.push({ id: `fog:${h.service}`, kind: "fog", service: h.service, severity: clamp012((h.latencyRatio - 1.5) / 4.5) });
   }
   return out;
 }
@@ -36875,6 +36884,11 @@ var PLAN = {
     req: (s) => `WHEN ${s} receives a valid request, THE service SHALL respond successfully; IF it cannot, THEN it SHALL return a typed error and log the cause.`,
     design: "Locate the failing handler from the cited error spans, fix the defect, and add input/dependency guards with a clear error path.",
     tasks: ["Reproduce with the cited trace", "Add a failing test for the error path", "Fix the defect and add a guard", "Verify error rate returns below 1%"]
+  },
+  saturation: {
+    req: (s) => `WHILE ${s} runs, THE service SHALL keep pool, queue and memory utilisation below 70%; WHEN utilisation passes 80%, THE service SHALL shed load or scale out and raise an alert.`,
+    design: "Find what grows without bound (unclosed connections, unbounded cache, queue with no consumer). Add a hard resource limit, release in a finally block, and add an autoscaling or load-shedding rule.",
+    tasks: ["Compare utilisation against the last deploy to find when growth started", "Capture a heap or pool dump at 80% utilisation", "Fix the leak and set an explicit resource limit", "Add a saturation alert at 80% and verify utilisation stays flat under load"]
   },
   down: {
     req: (s) => `WHEN a caller cannot reach ${s}, THE caller SHALL fail fast with a retry and circuit breaker; THE service ${s} SHALL pass its health check after restart.`,
@@ -36907,19 +36921,21 @@ function renderFixSpec(i) {
 }
 
 // packages/core/src/diagnose.ts
-var KIND = { fog: "latency", ghost: "errors", "locked-door": "down" };
+var KIND = { fog: "latency", ghost: "errors", "locked-door": "down", flood: "saturation" };
 var SPOOK = {
   latency: "Something heavy is dragging its feet in there.",
   errors: "It is not leaving quietly.",
-  down: "A door was locked from the inside."
+  down: "A door was locked from the inside.",
+  saturation: "The room is filling and nobody is bailing."
 };
 var uniq = (xs) => [...new Set(xs)];
 function diagnose(input2) {
   const { spans, map: map2, now, windowMs, memory = [], apparitionId } = input2;
   const health = computeHealth(spans, map2, now, windowMs);
   const all = apparitions(health);
-  const pick2 = [...all].filter((a) => !apparitionId || a.id === apparitionId).sort((a, b) => b.severity - a.severity)[0];
-  if (!pick2) return null;
+  const chosen = [...all].filter((a) => !apparitionId || a.id === apparitionId).sort((a, b) => b.severity - a.severity)[0];
+  if (!chosen) return null;
+  const pick2 = all.find((a) => a.kind === "flood" && a.service === chosen.service) ?? chosen;
   const win2 = spans.filter((s) => s.startMs >= now - windowMs && s.startMs < now);
   const h = health.find((x) => x.service === pick2.service);
   if (!h) return null;
@@ -36927,7 +36943,15 @@ function diagnose(input2) {
   const secs = Math.round(windowMs / 1e3);
   let sentence;
   let evidence;
-  if (kind === "down") {
+  if (kind === "saturation") {
+    evidence = win2.filter((s) => s.service === pick2.service).sort((a, b) => (b.saturation ?? 0) - (a.saturation ?? 0)).slice(0, 10);
+    const own2 = win2.filter((s) => s.service === pick2.service).sort((a, b) => a.startMs - b.startMs);
+    const half = Math.floor(own2.length / 2);
+    const mean = (xs) => xs.length ? xs.reduce((t, s) => t + (s.saturation ?? 0), 0) / xs.length : 0;
+    const perMin = (mean(own2.slice(half)) - mean(own2.slice(0, half))) / (windowMs / 2 / 6e4) * 100;
+    const trend = perMin >= 1 ? `and rising ${perMin.toFixed(0)}%/min` : "and holding";
+    sentence = `${pick2.service} is ${(h.saturation * 100).toFixed(0)}% saturated ${trend}, pushing p95 self-time to ${Math.round(h.p95SelfMs)}ms (${secs}s window).`;
+  } else if (kind === "down") {
     evidence = win2.filter((s) => s.errorKind === "unavailable" && s.peerService === pick2.service);
     const callers = uniq(evidence.map((s) => s.service)).join(", ");
     sentence = `${pick2.service} is unreachable: ${evidence.length} calls from ${callers} failed with connection refused in the last ${secs}s.`;
@@ -37015,13 +37039,13 @@ async function fetchJaeger(baseUrl, lookbackSec) {
 
 // packages/mcp/src/runtime.ts
 var WARMUP_MS = 6e4;
-function parseFaults(raw, known) {
+function parseFaults(raw, known, leakStartMs = 0) {
   if (!raw?.trim()) return [];
   return raw.split(",").map((part) => {
     const [service, kind] = part.trim().split(":");
     if (!service || !known.includes(service)) throw new Error(`SPECTER_FAULTS: unknown service '${service}'`);
-    if (kind !== "latency" && kind !== "errors" && kind !== "down") throw new Error(`SPECTER_FAULTS: unknown kind '${kind}'`);
-    return { service, kind };
+    if (kind !== "latency" && kind !== "errors" && kind !== "down" && kind !== "leak") throw new Error(`SPECTER_FAULTS: unknown kind '${kind}'`);
+    return kind === "leak" ? { service, kind, startMs: leakStartMs } : { service, kind };
   });
 }
 var Runtime = class {
@@ -37079,10 +37103,10 @@ var schemas = {
   get_traces: { service: serviceId.describe("Service to read spans for"), window_s: external_exports.number().int().min(1).max(300).default(30), limit: external_exports.number().int().min(1).max(200).default(20) },
   get_error_logs: { window_s: external_exports.number().int().min(1).max(300).default(30), limit: external_exports.number().int().min(1).max(100).default(20) },
   get_health: { window_s: external_exports.number().int().min(5).max(300).default(30) },
-  inject_fault: { service: serviceId, kind: external_exports.enum(["latency", "errors", "down"]), magnitude: external_exports.number().positive().optional().describe("latency: extra ms; errors: probability 0..1") },
+  inject_fault: { service: serviceId, kind: external_exports.enum(["latency", "errors", "down", "leak"]), magnitude: external_exports.number().positive().optional().describe("latency: extra ms; errors: probability 0..1; leak: seconds to full saturation") },
   clear_faults: {},
-  diagnose_incident: { apparition_id: external_exports.string().regex(/^(fog|ghost|locked-door):[a-z-]+$/).optional().describe("e.g. 'ghost:payment'; omit for the worst one"), window_s: external_exports.number().int().min(5).max(300).default(30) },
-  remember_incident: { service: serviceId, kind: external_exports.enum(["latency", "errors", "down"]), summary: external_exports.string().min(5).max(300) },
+  diagnose_incident: { apparition_id: external_exports.string().regex(/^(fog|ghost|locked-door|flood):[a-z-]+$/).optional().describe("e.g. 'ghost:payment'; omit for the worst one"), window_s: external_exports.number().int().min(5).max(300).default(30) },
+  remember_incident: { service: serviceId, kind: external_exports.enum(["latency", "errors", "down", "saturation"]), summary: external_exports.string().min(5).max(300) },
   recall_incidents: { service: serviceId.optional() }
 };
 var win = (s) => s * 1e3;
@@ -37110,7 +37134,7 @@ async function handle(rt2, name, a) {
     case "inject_fault": {
       if (rt2.source() === "jaeger") throw new Error("inject_fault is only available with the built-in simulator");
       if (a.kind === "down" && a.service === SHOP_MAP.entry) throw new Error("The entry service cannot be taken down; use latency or errors");
-      const fault = { service: a.service, kind: a.kind, ...a.magnitude !== void 0 ? { magnitude: a.magnitude } : {} };
+      const fault = { service: a.service, kind: a.kind, ...a.magnitude !== void 0 ? { magnitude: a.magnitude } : {}, ...a.kind === "leak" ? { startMs: rt2.now() } : {} };
       rt2.setFaults([...rt2.getFaults().filter((f) => !(f.service === a.service && f.kind === a.kind)), fault]);
       return { active: rt2.getFaults() };
     }
@@ -37138,15 +37162,15 @@ var DESCRIPTIONS = {
   get_house_layout: "Rooms and corridors with 3D coordinates for the haunted house.",
   get_traces: "Slowest recent spans for one service within a time window.",
   get_error_logs: "Recent errored spans with kind (own, upstream, unavailable) and message.",
-  get_health: "Per-service health (latency ratio, error rate, unavailable rate) and current apparitions (fog, ghost, locked-door).",
-  inject_fault: "Chaos: inject latency, errors or a downed dependency into a service (simulator only).",
+  get_health: "Per-service health (latency ratio, error rate, unavailable rate, saturation) and current apparitions (fog, ghost, locked-door, flood).",
+  inject_fault: "Chaos: inject latency, errors, a downed dependency or a memory leak (leak) into a service (simulator only).",
   clear_faults: "Remove all injected faults (banish the ghosts).",
   diagnose_incident: "Exorcist evidence: root-cause sentence, trace IDs, affected services, similar past incident and a Kiro fix spec.",
   remember_incident: "Store a resolved incident in memory so future diagnoses can reference it.",
   recall_incidents: "List remembered incidents, optionally for one service."
 };
-var rt = new Runtime({ faults: parseFaults(process.env.SPECTER_FAULTS, SHOP_MAP.services.map((x) => x.id)), memoryPath: process.env.SPECTER_MEMORY ?? ".specter/memory.json", ...process.env.SPECTER_JAEGER_URL ? { jaegerUrl: process.env.SPECTER_JAEGER_URL } : {} });
-var server = new McpServer({ name: "specter-mcp", version: "0.3.0" });
+var rt = new Runtime({ faults: parseFaults(process.env.SPECTER_FAULTS, SHOP_MAP.services.map((x) => x.id), WARMUP_MS), memoryPath: process.env.SPECTER_MEMORY ?? ".specter/memory.json", ...process.env.SPECTER_JAEGER_URL ? { jaegerUrl: process.env.SPECTER_JAEGER_URL } : {} });
+var server = new McpServer({ name: "specter-mcp", version: "0.7.0" });
 for (const name of Object.keys(schemas)) {
   server.registerTool(name, { description: DESCRIPTIONS[name], inputSchema: schemas[name] }, async (args) => {
     try {
