@@ -37336,7 +37336,7 @@ var DESCRIPTIONS = {
   recall_incidents: "List remembered incidents, optionally for one service."
 };
 var rt = new Runtime({ faults: parseFaults(process.env.SPECTER_FAULTS, SHOP_MAP.services.map((x) => x.id), WARMUP_MS), memoryPath: process.env.SPECTER_MEMORY ?? ".specter/memory.json", ...process.env.SPECTER_JAEGER_URL ? { jaegerUrl: process.env.SPECTER_JAEGER_URL } : {} });
-var server = new McpServer({ name: "specter-mcp", version: "0.12.0" });
+var server = new McpServer({ name: "specter-mcp", version: "0.12.1" });
 for (const name of Object.keys(schemas)) {
   server.registerTool(name, { description: DESCRIPTIONS[name], inputSchema: schemas[name] }, async (args) => {
     try {
