@@ -36971,6 +36971,7 @@ var cleanText = (v) => v.replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029\u200e\u
 
 // packages/core/src/fix-spec.ts
 var code = (v) => `\`${cleanText(v).replace(/`/g, "")}\``;
+var mdEscape = (v) => cleanText(v).replace(/([\\`*_{}[\]()#+!|<>~])/g, "\\$1").replace(/@/g, "@\u200B");
 var PLAN = {
   latency: {
     req: (s) => `WHEN ${s} handles a request, THE service SHALL complete its own work within 2x its baseline p95.`,
@@ -36996,17 +36997,17 @@ var PLAN = {
 function renderFixSpec(i) {
   const p = PLAN[i.kind];
   const memo2 = i.similar ? `
-> Memory: resembles ${cleanText(i.similar.id)} (${cleanText(i.similar.date)}): ${cleanText(i.similar.summary)}
+> Memory: resembles ${mdEscape(i.similar.id)} (${mdEscape(i.similar.date)}): ${mdEscape(i.similar.summary)}
 ` : "";
   return [
     `# Fix spec: ${code(i.service)} (${i.kind})`,
     "",
-    `**Root cause:** ${cleanText(i.sentence)}`,
+    `**Root cause:** ${mdEscape(i.sentence)}`,
     `**Confidence:** ${i.confidence}`,
-    `**Evidence:** ${i.evidenceTraceIds.map((t) => `\`${t}\``).join(", ") || "none"}`,
+    `**Evidence:** ${i.evidenceTraceIds.map((t) => code(t)).join(", ") || "none"}`,
     memo2,
     "## Requirements",
-    `1. ${p.req(i.service)}`,
+    `1. ${p.req(code(i.service))}`,
     "",
     "## Design",
     p.design,
@@ -37335,7 +37336,7 @@ var DESCRIPTIONS = {
   recall_incidents: "List remembered incidents, optionally for one service."
 };
 var rt = new Runtime({ faults: parseFaults(process.env.SPECTER_FAULTS, SHOP_MAP.services.map((x) => x.id), WARMUP_MS), memoryPath: process.env.SPECTER_MEMORY ?? ".specter/memory.json", ...process.env.SPECTER_JAEGER_URL ? { jaegerUrl: process.env.SPECTER_JAEGER_URL } : {} });
-var server = new McpServer({ name: "specter-mcp", version: "0.11.0" });
+var server = new McpServer({ name: "specter-mcp", version: "0.11.1" });
 for (const name of Object.keys(schemas)) {
   server.registerTool(name, { description: DESCRIPTIONS[name], inputSchema: schemas[name] }, async (args) => {
     try {
