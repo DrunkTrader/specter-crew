@@ -36780,7 +36780,6 @@ function simulateRange(fromSlot, toSlot, faults, seed = 1, map2 = SHOP_MAP) {
 
 // packages/core/src/layout.ts
 var ROOM_SPACING = 8;
-var MAX_COLUMNS = 8;
 var COLUMN_ORDER = [0, 1, -1, 2, -2, 3, -3, 4];
 var cellKey = (col, row) => `${col},${row}`;
 function depths(map2) {
@@ -36805,7 +36804,7 @@ function layoutHouse(map2, prev) {
   const depth = depths(map2);
   const taken = /* @__PURE__ */ new Set();
   const cell = /* @__PURE__ */ new Map();
-  const prevById = new Map((prev?.rooms ?? []).map((r) => [r.id, r]));
+  const prevById = new Map((Array.isArray(prev?.rooms) ? prev.rooms : []).map((r) => [r.id, r]));
   for (const s of map2.services) {
     const p = prevById.get(s.id);
     if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.z)) continue;
@@ -36815,12 +36814,15 @@ function layoutHouse(map2, prev) {
     taken.add(cellKey(c[0], c[1]));
   }
   const fresh = map2.services.filter((s) => !cell.has(s.id)).sort((a, b) => (depth.get(a.id) ?? 0) - (depth.get(b.id) ?? 0) || a.id.localeCompare(b.id));
+  const cursor = /* @__PURE__ */ new Map();
   for (const s of fresh) {
-    for (let row = depth.get(s.id) ?? 0; ; row++) {
-      const col = COLUMN_ORDER.slice(0, MAX_COLUMNS).find((c) => !taken.has(cellKey(c, row)));
+    const d = depth.get(s.id) ?? 0;
+    for (let row = Math.max(d, cursor.get(d) ?? d); ; row++) {
+      const col = COLUMN_ORDER.find((c) => !taken.has(cellKey(c, row)));
       if (col !== void 0) {
         taken.add(cellKey(col, row));
         cell.set(s.id, [col, row]);
+        cursor.set(d, row);
         break;
       }
     }
@@ -36897,7 +36899,7 @@ function computeHealth(spans, map2, now, windowMs, opts = {}) {
     const unavailable = refused.get(svc.id) ?? 0;
     const reached = mine.length + unavailable;
     const learned = opts.baselines?.get(svc.id);
-    const baseline = svc.baselineMs ?? (learned?.ready ? learned.p50Ms : void 0);
+    const baseline = svc.baselineMs ?? (learned?.ready ? learned.p95Ms : void 0);
     const p = p95(mine.map((s) => self.get(spanKey(s)) ?? 0));
     const latencyRatio = mine.length && baseline ? p / baseline : 0;
     const errorRate = mine.length ? mine.filter((s) => s.errorKind === "own").length / mine.length : 0;
@@ -37026,7 +37028,7 @@ function* exorcismStages(input2) {
   } else {
     const self = selfTimes(spans);
     evidence = win2.filter((s) => s.service === pick2.service).sort((a, b) => (self.get(spanKey(b)) ?? 0) - (self.get(spanKey(a)) ?? 0)).slice(0, 10);
-    const base2 = Math.round(map2.services.find((s) => s.id === pick2.service)?.baselineMs ?? baselines?.get(pick2.service)?.p50Ms ?? 0);
+    const base2 = Math.round(map2.services.find((s) => s.id === pick2.service)?.baselineMs ?? baselines?.get(pick2.service)?.p95Ms ?? 0);
     sentence = `${pick2.service} p95 self-time is ${Math.round(h.p95SelfMs)}ms against a ${base2}ms baseline (${h.latencyRatio.toFixed(1)}x) over the last ${secs}s.`;
   }
   const traceIds = uniq(evidence.map((s) => s.traceId)).slice(0, 3);
@@ -37268,7 +37270,7 @@ var DESCRIPTIONS = {
   recall_incidents: "List remembered incidents, optionally for one service."
 };
 var rt = new Runtime({ faults: parseFaults(process.env.SPECTER_FAULTS, SHOP_MAP.services.map((x) => x.id), WARMUP_MS), memoryPath: process.env.SPECTER_MEMORY ?? ".specter/memory.json", ...process.env.SPECTER_JAEGER_URL ? { jaegerUrl: process.env.SPECTER_JAEGER_URL } : {} });
-var server = new McpServer({ name: "specter-mcp", version: "0.10.1" });
+var server = new McpServer({ name: "specter-mcp", version: "0.10.2" });
 for (const name of Object.keys(schemas)) {
   server.registerTool(name, { description: DESCRIPTIONS[name], inputSchema: schemas[name] }, async (args) => {
     try {
