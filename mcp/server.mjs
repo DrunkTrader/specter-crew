@@ -36804,10 +36804,10 @@ function layoutHouse(map2, prev) {
   const depth = depths(map2);
   const taken = /* @__PURE__ */ new Set();
   const cell = /* @__PURE__ */ new Map();
-  const prevById = new Map((Array.isArray(prev?.rooms) ? prev.rooms : []).map((r) => [r.id, r]));
+  const prevById = new Map((Array.isArray(prev?.rooms) ? prev.rooms : []).filter((r) => r && typeof r === "object" && typeof r.id === "string").map((r) => [r.id, r]));
   for (const s of map2.services) {
     const p = prevById.get(s.id);
-    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.z)) continue;
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.z) || Math.abs(p.x) > 1e5 || Math.abs(p.z) > 1e5) continue;
     const c = [Math.round(p.x / ROOM_SPACING), Math.round(p.z / ROOM_SPACING)];
     if (taken.has(cellKey(c[0], c[1]))) continue;
     cell.set(s.id, c);
@@ -36844,7 +36844,7 @@ var spanKey = (s) => `${s.traceId}/${s.spanId}`;
 var parentKey = (s) => s.parentSpanId ? `${s.traceId}/${s.parentSpanId}` : void 0;
 
 // packages/core/src/health.ts
-var DEFAULT_THRESHOLDS = { fogRatio: 2, ghostRate: 0.05, doorRate: 0.5, floodLevel: 0.6, minFogMs: 20 };
+var DEFAULT_THRESHOLDS = { fogRatio: 2, ghostRate: 0.05, doorRate: 0.5, floodLevel: 0.6, minFogMs: 20, minLatencySamples: 8 };
 var FOG_RATIO = DEFAULT_THRESHOLDS.fogRatio;
 var GHOST_RATE = DEFAULT_THRESHOLDS.ghostRate;
 var DOOR_RATE = DEFAULT_THRESHOLDS.doorRate;
@@ -36899,9 +36899,10 @@ function computeHealth(spans, map2, now, windowMs, opts = {}) {
     const unavailable = refused.get(svc.id) ?? 0;
     const reached = mine.length + unavailable;
     const learned = opts.baselines?.get(svc.id);
-    const baseline = svc.baselineMs ?? (learned?.ready ? learned.p95Ms : void 0);
+    const baseline = svc.baselineMs ?? (learned?.ready ? learned.p99Ms : void 0);
     const p = p95(mine.map((s) => self.get(spanKey(s)) ?? 0));
-    const latencyRatio = mine.length && baseline ? p / baseline : 0;
+    const judged = mine.length >= t.minLatencySamples && baseline !== void 0;
+    const latencyRatio = judged ? p / baseline : 0;
     const errorRate = mine.length ? mine.filter((s) => s.errorKind === "own").length / mine.length : 0;
     const unavailableRate = reached ? unavailable / reached : 0;
     const saturation = mine.length ? mine.reduce((sum, s) => sum + (s.saturation ?? 0), 0) / mine.length : 0;
@@ -37028,7 +37029,7 @@ function* exorcismStages(input2) {
   } else {
     const self = selfTimes(spans);
     evidence = win2.filter((s) => s.service === pick2.service).sort((a, b) => (self.get(spanKey(b)) ?? 0) - (self.get(spanKey(a)) ?? 0)).slice(0, 10);
-    const base2 = Math.round(map2.services.find((s) => s.id === pick2.service)?.baselineMs ?? baselines?.get(pick2.service)?.p95Ms ?? 0);
+    const base2 = Math.round(map2.services.find((s) => s.id === pick2.service)?.baselineMs ?? baselines?.get(pick2.service)?.p99Ms ?? 0);
     sentence = `${pick2.service} p95 self-time is ${Math.round(h.p95SelfMs)}ms against a ${base2}ms baseline (${h.latencyRatio.toFixed(1)}x) over the last ${secs}s.`;
   }
   const traceIds = uniq(evidence.map((s) => s.traceId)).slice(0, 3);
@@ -37077,6 +37078,10 @@ function reclassifyErrors(spans) {
 
 // packages/core/src/otlp.ts
 var MAX_SPAN_MS = 7 * 24 * 36e5;
+
+// packages/core/src/baseline.ts
+var GROW = 1.25;
+var LN_GROW = Math.log(GROW);
 
 // packages/mcp/src/runtime.ts
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -37270,7 +37275,7 @@ var DESCRIPTIONS = {
   recall_incidents: "List remembered incidents, optionally for one service."
 };
 var rt = new Runtime({ faults: parseFaults(process.env.SPECTER_FAULTS, SHOP_MAP.services.map((x) => x.id), WARMUP_MS), memoryPath: process.env.SPECTER_MEMORY ?? ".specter/memory.json", ...process.env.SPECTER_JAEGER_URL ? { jaegerUrl: process.env.SPECTER_JAEGER_URL } : {} });
-var server = new McpServer({ name: "specter-mcp", version: "0.10.2" });
+var server = new McpServer({ name: "specter-mcp", version: "0.10.3" });
 for (const name of Object.keys(schemas)) {
   server.registerTool(name, { description: DESCRIPTIONS[name], inputSchema: schemas[name] }, async (args) => {
     try {
