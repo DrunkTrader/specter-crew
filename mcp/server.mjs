@@ -36780,84 +36780,120 @@ function simulateRange(fromSlot, toSlot, faults, seed = 1, map2 = SHOP_MAP) {
 
 // packages/core/src/layout.ts
 var ROOM_SPACING = 8;
-function layoutHouse(map2) {
-  const depth = /* @__PURE__ */ new Map([[map2.entry, 0]]);
-  let frontier = [map2.entry];
+var MAX_COLUMNS = 8;
+var COLUMN_ORDER = [0, 1, -1, 2, -2, 3, -3, 4];
+var cellKey = (col, row) => `${col},${row}`;
+function depths(map2) {
+  const ids2 = new Set(map2.services.map((s) => s.id));
+  const roots = (map2.entries?.length ? [...map2.entries] : map2.entry ? [map2.entry] : []).filter((e) => ids2.has(e));
+  const start = roots.length ? roots : map2.services[0] ? [map2.services[0].id] : [];
+  const depth = new Map(start.map((r) => [r, 0]));
+  let frontier = [...start];
   while (frontier.length) {
     const next = [];
-    for (const id of frontier) {
-      for (const e of map2.edges) {
-        if (e.from === id && !depth.has(e.to)) {
-          depth.set(e.to, (depth.get(id) ?? 0) + 1);
-          next.push(e.to);
-        }
-      }
+    for (const id of frontier) for (const e of map2.edges) if (e.from === id && ids2.has(e.to) && !depth.has(e.to)) {
+      depth.set(e.to, (depth.get(id) ?? 0) + 1);
+      next.push(e.to);
     }
     frontier = next;
   }
-  const missing = map2.services.filter((s) => !depth.has(s.id)).map((s) => s.id);
-  if (missing.length) throw new Error(`Unreachable services from entry '${map2.entry}': ${missing.join(", ")}`);
-  const byFloor = /* @__PURE__ */ new Map();
+  const orphanDepth = Math.max(0, ...depth.values()) + 1;
+  for (const s of map2.services) if (!depth.has(s.id)) depth.set(s.id, orphanDepth);
+  return depth;
+}
+function layoutHouse(map2, prev) {
+  const depth = depths(map2);
+  const taken = /* @__PURE__ */ new Set();
+  const cell = /* @__PURE__ */ new Map();
+  const prevById = new Map((prev?.rooms ?? []).map((r) => [r.id, r]));
   for (const s of map2.services) {
-    const d = depth.get(s.id);
-    byFloor.set(d, [...byFloor.get(d) ?? [], s.id].sort());
+    const p = prevById.get(s.id);
+    if (p) {
+      const c = [Math.round(p.x / ROOM_SPACING), Math.round(p.z / ROOM_SPACING)];
+      cell.set(s.id, c);
+      taken.add(cellKey(c[0], c[1]));
+    }
+  }
+  const fresh = map2.services.filter((s) => !cell.has(s.id)).sort((a, b) => (depth.get(a.id) ?? 0) - (depth.get(b.id) ?? 0) || a.id.localeCompare(b.id));
+  for (const s of fresh) {
+    for (let row = depth.get(s.id) ?? 0; ; row++) {
+      const col = COLUMN_ORDER.slice(0, MAX_COLUMNS).find((c) => !taken.has(cellKey(c, row)));
+      if (col !== void 0) {
+        taken.add(cellKey(col, row));
+        cell.set(s.id, [col, row]);
+        break;
+      }
+    }
   }
   const rooms = map2.services.map((s) => {
-    const d = depth.get(s.id);
-    const row = byFloor.get(d);
-    const i = row.indexOf(s.id);
-    return { id: s.id, label: s.label, floor: d, x: (i - (row.length - 1) / 2) * ROOM_SPACING, z: d * ROOM_SPACING };
+    const [col, row] = cell.get(s.id);
+    return { id: s.id, label: s.label, floor: depth.get(s.id) ?? 0, x: col * ROOM_SPACING, z: row * ROOM_SPACING };
   });
   const at = new Map(rooms.map((r) => [r.id, r]));
-  const corridors = map2.edges.map((e) => {
+  const corridors = map2.edges.flatMap((e) => {
     const a = at.get(e.from), b = at.get(e.to);
-    if (!a || !b) throw new Error(`Edge ${e.from}->${e.to} references unknown service`);
-    return { from: e.from, to: e.to, ax: a.x, az: a.z, bx: b.x, bz: b.z };
+    return a && b ? [{ from: e.from, to: e.to, ax: a.x, az: a.z, bx: b.x, bz: b.z }] : [];
   });
   return { rooms, corridors };
 }
 
 // packages/core/src/health.ts
-var FOG_RATIO = 2;
-var GHOST_RATE = 0.05;
-var DOOR_RATE = 0.5;
-var FLOOD_LEVEL = 0.6;
+var DEFAULT_THRESHOLDS = { fogRatio: 2, ghostRate: 0.05, doorRate: 0.5, floodLevel: 0.6 };
+var FOG_RATIO = DEFAULT_THRESHOLDS.fogRatio;
+var GHOST_RATE = DEFAULT_THRESHOLDS.ghostRate;
+var DOOR_RATE = DEFAULT_THRESHOLDS.doorRate;
+var FLOOD_LEVEL = DEFAULT_THRESHOLDS.floodLevel;
 var clamp012 = (n) => Math.min(1, Math.max(0, n));
 var severityOf = (latencyRatio, errorRate, unavailableRate, saturation = 0) => Math.max(clamp012((latencyRatio - 1.5) / 4.5), clamp012(errorRate / 0.5), clamp012(unavailableRate / 0.9), clamp012((saturation - 0.5) / 0.4));
 function selfTimes(spans) {
-  const childSum = /* @__PURE__ */ new Map();
-  for (const s of spans) if (s.parentSpanId) childSum.set(s.parentSpanId, (childSum.get(s.parentSpanId) ?? 0) + s.durationMs);
-  return new Map(spans.map((s) => [s.spanId, Math.max(0, s.durationMs - (childSum.get(s.spanId) ?? 0))]));
+  const kids = /* @__PURE__ */ new Map();
+  for (const s of spans) if (s.parentSpanId) kids.set(s.parentSpanId, [...kids.get(s.parentSpanId) ?? [], [s.startMs, s.startMs + s.durationMs]]);
+  return new Map(spans.map((s) => {
+    const end = s.startMs + s.durationMs;
+    const iv = (kids.get(s.spanId) ?? []).map(([a, b]) => [Math.max(a, s.startMs), Math.min(b, end)]).filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+    let covered = 0;
+    let cur;
+    for (const [a, b] of iv) {
+      if (!cur || a > cur[1]) {
+        if (cur) covered += cur[1] - cur[0];
+        cur = [a, b];
+      } else cur[1] = Math.max(cur[1], b);
+    }
+    if (cur) covered += cur[1] - cur[0];
+    return [s.spanId, Math.max(0, s.durationMs - covered)];
+  }));
 }
 var p95 = (xs) => {
   if (!xs.length) return 0;
   const sorted = [...xs].sort((a, b) => a - b);
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
 };
-function computeHealth(spans, map2, now, windowMs) {
+function computeHealth(spans, map2, now, windowMs, opts = {}) {
   const win2 = spans.filter((s) => s.startMs >= now - windowMs && s.startMs < now);
   const self = selfTimes(spans);
   return map2.services.map((svc) => {
     const own2 = win2.filter((s) => s.service === svc.id);
     const unavailable = win2.filter((s) => s.errorKind === "unavailable" && s.peerService === svc.id).length;
     const reached = own2.length + unavailable;
+    const learned = opts.baselines?.get(svc.id);
+    const baseline = svc.baselineMs ?? (learned?.ready ? learned.p50Ms : void 0);
     const p = p95(own2.map((s) => self.get(s.spanId) ?? 0));
-    const latencyRatio = own2.length ? p / svc.baselineMs : 0;
+    const latencyRatio = own2.length && baseline ? p / baseline : 0;
     const errorRate = own2.length ? own2.filter((s) => s.errorKind === "own").length / own2.length : 0;
     const unavailableRate = reached ? unavailable / reached : 0;
     const saturation = own2.length ? own2.reduce((sum, s) => sum + (s.saturation ?? 0), 0) / own2.length : 0;
     const severity = severityOf(latencyRatio, errorRate, unavailableRate, saturation);
-    const state = reached === 0 ? "quiet" : severity > 0.05 ? "haunted" : "calm";
+    const state = reached === 0 ? "quiet" : baseline === void 0 && severity <= 0.05 ? "learning" : severity > 0.05 ? "haunted" : "calm";
     return { service: svc.id, samples: own2.length, p95SelfMs: p, latencyRatio, errorRate, unavailableRate, saturation, severity, state };
   });
 }
-function apparitions(health) {
+function apparitions(health, t = DEFAULT_THRESHOLDS) {
   const out = [];
   for (const h of health) {
-    if (h.unavailableRate >= DOOR_RATE) out.push({ id: `locked-door:${h.service}`, kind: "locked-door", service: h.service, severity: clamp012(h.unavailableRate / 0.9) });
-    if (h.errorRate >= GHOST_RATE) out.push({ id: `ghost:${h.service}`, kind: "ghost", service: h.service, severity: clamp012(h.errorRate / 0.5) });
-    if (h.saturation >= FLOOD_LEVEL) out.push({ id: `flood:${h.service}`, kind: "flood", service: h.service, severity: clamp012((h.saturation - 0.5) / 0.4) });
-    if (h.latencyRatio >= FOG_RATIO) out.push({ id: `fog:${h.service}`, kind: "fog", service: h.service, severity: clamp012((h.latencyRatio - 1.5) / 4.5) });
+    if (h.unavailableRate >= t.doorRate) out.push({ id: `locked-door:${h.service}`, kind: "locked-door", service: h.service, severity: clamp012(h.unavailableRate / 0.9) });
+    if (h.errorRate >= t.ghostRate) out.push({ id: `ghost:${h.service}`, kind: "ghost", service: h.service, severity: clamp012(h.errorRate / 0.5) });
+    if (h.saturation >= t.floodLevel) out.push({ id: `flood:${h.service}`, kind: "flood", service: h.service, severity: clamp012((h.saturation - 0.5) / 0.4) });
+    if (h.latencyRatio >= t.fogRatio) out.push({ id: `fog:${h.service}`, kind: "fog", service: h.service, severity: clamp012((h.latencyRatio - 1.5) / 4.5) });
   }
   return out;
 }
@@ -36930,12 +36966,12 @@ var SPOOK = {
 };
 var uniq = (xs) => [...new Set(xs)];
 function* exorcismStages(input2) {
-  const { spans, map: map2, now, windowMs, memory = [], apparitionId } = input2;
+  const { spans, map: map2, now, windowMs, memory = [], apparitionId, baselines, thresholds } = input2;
   const secs = Math.round(windowMs / 1e3);
   const win2 = spans.filter((s) => s.startMs >= now - windowMs && s.startMs < now);
   yield { name: "Reading traces", detail: `${win2.length} spans from ${uniq(win2.map((s) => s.traceId)).length} traces in the last ${secs}s` };
-  const health = computeHealth(spans, map2, now, windowMs);
-  const all = apparitions(health);
+  const health = computeHealth(spans, map2, now, windowMs, baselines ? { baselines } : {});
+  const all = apparitions(health, thresholds);
   const chosen = [...all].filter((a) => !apparitionId || a.id === apparitionId).sort((a, b) => b.severity - a.severity)[0];
   if (!chosen) {
     yield { name: "Correlating spans", detail: "no apparition found" };
@@ -36968,17 +37004,28 @@ function* exorcismStages(input2) {
   } else {
     const self = selfTimes(spans);
     evidence = win2.filter((s) => s.service === pick2.service).sort((a, b) => (self.get(b.spanId) ?? 0) - (self.get(a.spanId) ?? 0)).slice(0, 10);
-    const base2 = map2.services.find((s) => s.id === pick2.service)?.baselineMs ?? 0;
+    const base2 = Math.round(map2.services.find((s) => s.id === pick2.service)?.baselineMs ?? baselines?.get(pick2.service)?.p50Ms ?? 0);
     sentence = `${pick2.service} p95 self-time is ${Math.round(h.p95SelfMs)}ms against a ${base2}ms baseline (${h.latencyRatio.toFixed(1)}x) over the last ${secs}s.`;
   }
   const traceIds = uniq(evidence.map((s) => s.traceId)).slice(0, 3);
-  const affected = uniq(win2.filter((s) => s.status === "error" && s.errorKind !== "own" || s.errorKind === "own" && s.service !== pick2.service).map((s) => s.service)).filter((s) => s !== pick2.service);
+  const affected = uniq(win2.filter((s) => s.errorKind === "upstream" || s.errorKind === "unavailable").map((s) => s.service)).filter((s) => s !== pick2.service);
   yield { name: "Correlating spans", detail: `${pick2.service} is the source; ${affected.length} other service${affected.length === 1 ? "" : "s"} affected` };
   const similar = findSimilar(memory, pick2.service, kind);
   yield { name: "Searching memory", detail: similar ? `matched ${similar.id} (${similar.date})` : "no similar incident" };
-  const confidence = h.samples + evidence.length >= 20 && pick2.severity >= 0.3 ? "high" : evidence.length >= 5 ? "medium" : "low";
+  let confidence = h.samples + evidence.length >= 20 && pick2.severity >= 0.3 ? "high" : evidence.length >= 5 ? "medium" : "low";
+  const caveats = [];
+  if (h.samples < 10) {
+    confidence = "low";
+    caveats.push(`only ${h.samples} samples for ${pick2.service}`);
+  }
+  const rival = all.find((a) => a.service !== pick2.service && !affected.includes(a.service) && a.severity >= 0.8 * pick2.severity);
+  if (rival) {
+    if (confidence === "high") confidence = "medium";
+    caveats.push(`${rival.service} is also haunted (${rival.kind}) at similar severity`);
+  }
+  const caveat = caveats.length ? caveats.join("; ") : void 0;
   const full = `${sentence} ${SPOOK[kind]}`;
-  const base = { service: pick2.service, kind, sentence: full, confidence, evidenceTraceIds: traceIds, affected, ...similar ? { similar } : {} };
+  const base = { service: pick2.service, kind, sentence: full, confidence, ...caveat ? { caveat } : {}, evidenceTraceIds: traceIds, affected, ...similar ? { similar } : {} };
   const fixSpec = renderFixSpec({ ...base, similar });
   yield { name: "Writing fix spec", detail: `${fixSpec.split("\n").length} lines` };
   return { ...base, fixSpec };
@@ -36989,6 +37036,19 @@ function diagnose(input2) {
     const r = it.next();
     if (r.done) return r.value;
   }
+}
+
+// packages/core/src/classify.ts
+var REFUSED = /refused|unavailable|unreachable|no route|econnreset|dns|name resolution|timed? ?out connecting/i;
+function reclassifyErrors(spans) {
+  const failingParents = new Set(spans.filter((s) => s.status === "error" && s.parentSpanId).map((s) => s.parentSpanId));
+  return spans.map((s) => {
+    if (s.status !== "error") return s;
+    const refused = REFUSED.test(s.errorMessage ?? "") && Boolean(s.peerService);
+    if (refused) return { ...s, errorKind: "unavailable" };
+    if (failingParents.has(s.spanId)) return { ...s, errorKind: "upstream" };
+    return { ...s, errorKind: "own" };
+  });
 }
 
 // packages/mcp/src/runtime.ts
@@ -37012,11 +37072,10 @@ var JaegerTrace = external_exports.object({
 var JaegerResponse = external_exports.object({ data: external_exports.array(JaegerTrace) });
 function fromJaeger(raw) {
   const parsed = JaegerResponse.parse(raw);
-  return reclassify(parsed.data.flatMap((t) => t.spans.map((s) => {
+  return reclassifyErrors(parsed.data.flatMap((t) => t.spans.map((s) => {
     const tag = (k) => s.tags.find((x) => x.key === k)?.value;
     const isErr = tag("error") === true || tag("otel.status_code") === "ERROR";
     const peer = tag("peer.service");
-    const refused = isErr && String(tag("error.message") ?? "").includes("refused");
     const parent = s.references.find((r) => r.refType === "CHILD_OF")?.spanID;
     return {
       traceId: t.traceID,
@@ -37027,14 +37086,10 @@ function fromJaeger(raw) {
       startMs: s.startTime / 1e3,
       durationMs: s.duration / 1e3,
       status: isErr ? "error" : "ok",
-      ...isErr ? { errorKind: refused ? "unavailable" : "own", errorMessage: String(tag("error.message") ?? "error") } : {},
-      ...refused && typeof peer === "string" ? { peerService: peer } : {}
+      ...isErr ? { errorMessage: String(tag("error.message") ?? "error") } : {},
+      ...typeof peer === "string" ? { peerService: peer } : {}
     };
   })));
-}
-function reclassify(spans) {
-  const failingParents = new Set(spans.filter((s) => s.status === "error" && s.parentSpanId).map((s) => s.parentSpanId));
-  return spans.map((s) => s.status === "error" && s.errorKind === "own" && failingParents.has(s.spanId) ? { ...s, errorKind: "upstream" } : s);
 }
 var Services = external_exports.object({ data: external_exports.array(external_exports.string()).nullable() });
 async function getJson(url2) {
@@ -37188,7 +37243,7 @@ var DESCRIPTIONS = {
   recall_incidents: "List remembered incidents, optionally for one service."
 };
 var rt = new Runtime({ faults: parseFaults(process.env.SPECTER_FAULTS, SHOP_MAP.services.map((x) => x.id), WARMUP_MS), memoryPath: process.env.SPECTER_MEMORY ?? ".specter/memory.json", ...process.env.SPECTER_JAEGER_URL ? { jaegerUrl: process.env.SPECTER_JAEGER_URL } : {} });
-var server = new McpServer({ name: "specter-mcp", version: "0.9.1" });
+var server = new McpServer({ name: "specter-mcp", version: "0.10.0" });
 for (const name of Object.keys(schemas)) {
   server.registerTool(name, { description: DESCRIPTIONS[name], inputSchema: schemas[name] }, async (args) => {
     try {
