@@ -36808,11 +36808,11 @@ function layoutHouse(map2, prev) {
   const prevById = new Map((prev?.rooms ?? []).map((r) => [r.id, r]));
   for (const s of map2.services) {
     const p = prevById.get(s.id);
-    if (p) {
-      const c = [Math.round(p.x / ROOM_SPACING), Math.round(p.z / ROOM_SPACING)];
-      cell.set(s.id, c);
-      taken.add(cellKey(c[0], c[1]));
-    }
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.z)) continue;
+    const c = [Math.round(p.x / ROOM_SPACING), Math.round(p.z / ROOM_SPACING)];
+    if (taken.has(cellKey(c[0], c[1]))) continue;
+    cell.set(s.id, c);
+    taken.add(cellKey(c[0], c[1]));
   }
   const fresh = map2.services.filter((s) => !cell.has(s.id)).sort((a, b) => (depth.get(a.id) ?? 0) - (depth.get(b.id) ?? 0) || a.id.localeCompare(b.id));
   for (const s of fresh) {
@@ -36837,8 +36837,12 @@ function layoutHouse(map2, prev) {
   return { rooms, corridors };
 }
 
+// packages/core/src/span-key.ts
+var spanKey = (s) => `${s.traceId}/${s.spanId}`;
+var parentKey = (s) => s.parentSpanId ? `${s.traceId}/${s.parentSpanId}` : void 0;
+
 // packages/core/src/health.ts
-var DEFAULT_THRESHOLDS = { fogRatio: 2, ghostRate: 0.05, doorRate: 0.5, floodLevel: 0.6 };
+var DEFAULT_THRESHOLDS = { fogRatio: 2, ghostRate: 0.05, doorRate: 0.5, floodLevel: 0.6, minFogMs: 20 };
 var FOG_RATIO = DEFAULT_THRESHOLDS.fogRatio;
 var GHOST_RATE = DEFAULT_THRESHOLDS.ghostRate;
 var DOOR_RATE = DEFAULT_THRESHOLDS.doorRate;
@@ -36847,10 +36851,17 @@ var clamp012 = (n) => Math.min(1, Math.max(0, n));
 var severityOf = (latencyRatio, errorRate, unavailableRate, saturation = 0) => Math.max(clamp012((latencyRatio - 1.5) / 4.5), clamp012(errorRate / 0.5), clamp012(unavailableRate / 0.9), clamp012((saturation - 0.5) / 0.4));
 function selfTimes(spans) {
   const kids = /* @__PURE__ */ new Map();
-  for (const s of spans) if (s.parentSpanId) kids.set(s.parentSpanId, [...kids.get(s.parentSpanId) ?? [], [s.startMs, s.startMs + s.durationMs]]);
-  return new Map(spans.map((s) => {
+  for (const s of spans) {
+    const pk = parentKey(s);
+    if (!pk) continue;
+    const list = kids.get(pk);
+    if (list) list.push([s.startMs, s.startMs + s.durationMs]);
+    else kids.set(pk, [[s.startMs, s.startMs + s.durationMs]]);
+  }
+  const out = /* @__PURE__ */ new Map();
+  for (const s of spans) {
     const end = s.startMs + s.durationMs;
-    const iv = (kids.get(s.spanId) ?? []).map(([a, b]) => [Math.max(a, s.startMs), Math.min(b, end)]).filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+    const iv = (kids.get(spanKey(s)) ?? []).map(([a, b]) => [Math.max(a, s.startMs), Math.min(b, end)]).filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
     let covered = 0;
     let cur;
     for (const [a, b] of iv) {
@@ -36860,8 +36871,9 @@ function selfTimes(spans) {
       } else cur[1] = Math.max(cur[1], b);
     }
     if (cur) covered += cur[1] - cur[0];
-    return [s.spanId, Math.max(0, s.durationMs - covered)];
-  }));
+    out.set(spanKey(s), Math.max(0, s.durationMs - covered));
+  }
+  return out;
 }
 var p95 = (xs) => {
   if (!xs.length) return 0;
@@ -36869,22 +36881,32 @@ var p95 = (xs) => {
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
 };
 function computeHealth(spans, map2, now, windowMs, opts = {}) {
-  const win2 = spans.filter((s) => s.startMs >= now - windowMs && s.startMs < now);
+  const t = opts.thresholds ?? DEFAULT_THRESHOLDS;
   const self = selfTimes(spans);
+  const own2 = /* @__PURE__ */ new Map();
+  const refused = /* @__PURE__ */ new Map();
+  for (const s of spans) {
+    if (!(s.startMs >= now - windowMs && s.startMs < now)) continue;
+    const list = own2.get(s.service);
+    if (list) list.push(s);
+    else own2.set(s.service, [s]);
+    if (s.errorKind === "unavailable" && s.peerService) refused.set(s.peerService, (refused.get(s.peerService) ?? 0) + 1);
+  }
   return map2.services.map((svc) => {
-    const own2 = win2.filter((s) => s.service === svc.id);
-    const unavailable = win2.filter((s) => s.errorKind === "unavailable" && s.peerService === svc.id).length;
-    const reached = own2.length + unavailable;
+    const mine = own2.get(svc.id) ?? [];
+    const unavailable = refused.get(svc.id) ?? 0;
+    const reached = mine.length + unavailable;
     const learned = opts.baselines?.get(svc.id);
     const baseline = svc.baselineMs ?? (learned?.ready ? learned.p50Ms : void 0);
-    const p = p95(own2.map((s) => self.get(s.spanId) ?? 0));
-    const latencyRatio = own2.length && baseline ? p / baseline : 0;
-    const errorRate = own2.length ? own2.filter((s) => s.errorKind === "own").length / own2.length : 0;
+    const p = p95(mine.map((s) => self.get(spanKey(s)) ?? 0));
+    const latencyRatio = mine.length && baseline ? p / baseline : 0;
+    const errorRate = mine.length ? mine.filter((s) => s.errorKind === "own").length / mine.length : 0;
     const unavailableRate = reached ? unavailable / reached : 0;
-    const saturation = own2.length ? own2.reduce((sum, s) => sum + (s.saturation ?? 0), 0) / own2.length : 0;
+    const saturation = mine.length ? mine.reduce((sum, s) => sum + (s.saturation ?? 0), 0) / mine.length : 0;
     const severity = severityOf(latencyRatio, errorRate, unavailableRate, saturation);
-    const state = reached === 0 ? "quiet" : baseline === void 0 && severity <= 0.05 ? "learning" : severity > 0.05 ? "haunted" : "calm";
-    return { service: svc.id, samples: own2.length, p95SelfMs: p, latencyRatio, errorRate, unavailableRate, saturation, severity, state };
+    const isHaunted = latencyRatio >= t.fogRatio && p >= t.minFogMs || errorRate >= t.ghostRate || unavailableRate >= t.doorRate || saturation >= t.floodLevel;
+    const state = reached === 0 ? "quiet" : isHaunted ? "haunted" : baseline === void 0 ? "learning" : "calm";
+    return { service: svc.id, samples: mine.length, p95SelfMs: p, latencyRatio, errorRate, unavailableRate, saturation, severity, state };
   });
 }
 function apparitions(health, t = DEFAULT_THRESHOLDS) {
@@ -36893,7 +36915,7 @@ function apparitions(health, t = DEFAULT_THRESHOLDS) {
     if (h.unavailableRate >= t.doorRate) out.push({ id: `locked-door:${h.service}`, kind: "locked-door", service: h.service, severity: clamp012(h.unavailableRate / 0.9) });
     if (h.errorRate >= t.ghostRate) out.push({ id: `ghost:${h.service}`, kind: "ghost", service: h.service, severity: clamp012(h.errorRate / 0.5) });
     if (h.saturation >= t.floodLevel) out.push({ id: `flood:${h.service}`, kind: "flood", service: h.service, severity: clamp012((h.saturation - 0.5) / 0.4) });
-    if (h.latencyRatio >= t.fogRatio) out.push({ id: `fog:${h.service}`, kind: "fog", service: h.service, severity: clamp012((h.latencyRatio - 1.5) / 4.5) });
+    if (h.latencyRatio >= t.fogRatio && h.p95SelfMs >= t.minFogMs) out.push({ id: `fog:${h.service}`, kind: "fog", service: h.service, severity: clamp012((h.latencyRatio - 1.5) / 4.5) });
   }
   return out;
 }
@@ -36970,7 +36992,7 @@ function* exorcismStages(input2) {
   const secs = Math.round(windowMs / 1e3);
   const win2 = spans.filter((s) => s.startMs >= now - windowMs && s.startMs < now);
   yield { name: "Reading traces", detail: `${win2.length} spans from ${uniq(win2.map((s) => s.traceId)).length} traces in the last ${secs}s` };
-  const health = computeHealth(spans, map2, now, windowMs, baselines ? { baselines } : {});
+  const health = computeHealth(spans, map2, now, windowMs, { ...baselines ? { baselines } : {}, ...thresholds ? { thresholds } : {} });
   const all = apparitions(health, thresholds);
   const chosen = [...all].filter((a) => !apparitionId || a.id === apparitionId).sort((a, b) => b.severity - a.severity)[0];
   if (!chosen) {
@@ -37003,7 +37025,7 @@ function* exorcismStages(input2) {
     sentence = `${pick2.service} fails ${(h.errorRate * 100).toFixed(0)}% of requests (${evidence.length} of ${h.samples} spans, "${evidence[0]?.errorMessage ?? "error"}") in the last ${secs}s.`;
   } else {
     const self = selfTimes(spans);
-    evidence = win2.filter((s) => s.service === pick2.service).sort((a, b) => (self.get(b.spanId) ?? 0) - (self.get(a.spanId) ?? 0)).slice(0, 10);
+    evidence = win2.filter((s) => s.service === pick2.service).sort((a, b) => (self.get(spanKey(b)) ?? 0) - (self.get(spanKey(a)) ?? 0)).slice(0, 10);
     const base2 = Math.round(map2.services.find((s) => s.id === pick2.service)?.baselineMs ?? baselines?.get(pick2.service)?.p50Ms ?? 0);
     sentence = `${pick2.service} p95 self-time is ${Math.round(h.p95SelfMs)}ms against a ${base2}ms baseline (${h.latencyRatio.toFixed(1)}x) over the last ${secs}s.`;
   }
@@ -37041,15 +37063,18 @@ function diagnose(input2) {
 // packages/core/src/classify.ts
 var REFUSED = /refused|unavailable|unreachable|no route|econnreset|dns|name resolution|timed? ?out connecting/i;
 function reclassifyErrors(spans) {
-  const failingParents = new Set(spans.filter((s) => s.status === "error" && s.parentSpanId).map((s) => s.parentSpanId));
+  const failingParents = new Set(spans.filter((s) => s.status === "error").map(parentKey).filter((k) => k !== void 0));
   return spans.map((s) => {
     if (s.status !== "error") return s;
     const refused = REFUSED.test(s.errorMessage ?? "") && Boolean(s.peerService);
     if (refused) return { ...s, errorKind: "unavailable" };
-    if (failingParents.has(s.spanId)) return { ...s, errorKind: "upstream" };
+    if (failingParents.has(spanKey(s))) return { ...s, errorKind: "upstream" };
     return { ...s, errorKind: "own" };
   });
 }
+
+// packages/core/src/otlp.ts
+var MAX_SPAN_MS = 7 * 24 * 36e5;
 
 // packages/mcp/src/runtime.ts
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -37243,7 +37268,7 @@ var DESCRIPTIONS = {
   recall_incidents: "List remembered incidents, optionally for one service."
 };
 var rt = new Runtime({ faults: parseFaults(process.env.SPECTER_FAULTS, SHOP_MAP.services.map((x) => x.id), WARMUP_MS), memoryPath: process.env.SPECTER_MEMORY ?? ".specter/memory.json", ...process.env.SPECTER_JAEGER_URL ? { jaegerUrl: process.env.SPECTER_JAEGER_URL } : {} });
-var server = new McpServer({ name: "specter-mcp", version: "0.10.0" });
+var server = new McpServer({ name: "specter-mcp", version: "0.10.1" });
 for (const name of Object.keys(schemas)) {
   server.registerTool(name, { description: DESCRIPTIONS[name], inputSchema: schemas[name] }, async (args) => {
     try {
