@@ -63,9 +63,9 @@ var require_code = __commonJS({
     };
     exports.Name = Name;
     var _Code = class extends _CodeOrName {
-      constructor(code) {
+      constructor(code2) {
         super();
-        this._items = typeof code === "string" ? [code] : code;
+        this._items = typeof code2 === "string" ? [code2] : code2;
       }
       toString() {
         return this.str;
@@ -92,13 +92,13 @@ var require_code = __commonJS({
     exports._Code = _Code;
     exports.nil = new _Code("");
     function _(strs, ...args) {
-      const code = [strs[0]];
+      const code2 = [strs[0]];
       let i = 0;
       while (i < args.length) {
-        addCodeArg(code, args[i]);
-        code.push(strs[++i]);
+        addCodeArg(code2, args[i]);
+        code2.push(strs[++i]);
       }
-      return new _Code(code);
+      return new _Code(code2);
     }
     exports._ = _;
     var plus = new _Code("+");
@@ -114,13 +114,13 @@ var require_code = __commonJS({
       return new _Code(expr);
     }
     exports.str = str;
-    function addCodeArg(code, arg) {
+    function addCodeArg(code2, arg) {
       if (arg instanceof _Code)
-        code.push(...arg._items);
+        code2.push(...arg._items);
       else if (arg instanceof Name)
-        code.push(arg);
+        code2.push(arg);
       else
-        code.push(interpolate(arg));
+        code2.push(interpolate(arg));
     }
     exports.addCodeArg = addCodeArg;
     function optimize(expr) {
@@ -304,7 +304,7 @@ var require_scope = __commonJS({
         }, usedValues, getCode);
       }
       _reduceValues(values, valueCode, usedValues = {}, getCode) {
-        let code = code_1.nil;
+        let code2 = code_1.nil;
         for (const prefix in values) {
           const vs = values[prefix];
           if (!vs)
@@ -317,16 +317,16 @@ var require_scope = __commonJS({
             let c = valueCode(name);
             if (c) {
               const def = this.opts.es5 ? exports.varKinds.var : exports.varKinds.const;
-              code = (0, code_1._)`${code}${def} ${name} = ${c};${this.opts._n}`;
+              code2 = (0, code_1._)`${code2}${def} ${name} = ${c};${this.opts._n}`;
             } else if (c = getCode === null || getCode === void 0 ? void 0 : getCode(name)) {
-              code = (0, code_1._)`${code}${c}${this.opts._n}`;
+              code2 = (0, code_1._)`${code2}${c}${this.opts._n}`;
             } else {
               throw new ValueError(name);
             }
             nameSet.set(name, UsedValueState.Completed);
           });
         }
-        return code;
+        return code2;
       }
     };
     exports.ValueScope = ValueScope;
@@ -486,9 +486,9 @@ var require_codegen = __commonJS({
       }
     };
     var AnyCode = class extends Node {
-      constructor(code) {
+      constructor(code2) {
         super();
-        this.code = code;
+        this.code = code2;
       }
       render({ _n }) {
         return `${this.code};` + _n;
@@ -510,7 +510,7 @@ var require_codegen = __commonJS({
         this.nodes = nodes;
       }
       render(opts) {
-        return this.nodes.reduce((code, n) => code + n.render(opts), "");
+        return this.nodes.reduce((code2, n) => code2 + n.render(opts), "");
       }
       optimizeNodes() {
         const { nodes } = this;
@@ -558,10 +558,10 @@ var require_codegen = __commonJS({
         this.condition = condition;
       }
       render(opts) {
-        let code = `if(${this.condition})` + super.render(opts);
+        let code2 = `if(${this.condition})` + super.render(opts);
         if (this.else)
-          code += "else " + this.else.render(opts);
-        return code;
+          code2 += "else " + this.else.render(opts);
+        return code2;
       }
       optimizeNodes() {
         super.optimizeNodes();
@@ -682,12 +682,12 @@ var require_codegen = __commonJS({
     Return.kind = "return";
     var Try = class extends BlockNode {
       render(opts) {
-        let code = "try" + super.render(opts);
+        let code2 = "try" + super.render(opts);
         if (this.catch)
-          code += this.catch.render(opts);
+          code2 += this.catch.render(opts);
         if (this.finally)
-          code += this.finally.render(opts);
-        return code;
+          code2 += this.finally.render(opts);
+        return code2;
       }
       optimizeNodes() {
         var _a3, _b;
@@ -804,18 +804,18 @@ var require_codegen = __commonJS({
       }
       // returns code for object literal for the passed argument list of key-value pairs
       object(...keyValues) {
-        const code = ["{"];
+        const code2 = ["{"];
         for (const [key, value] of keyValues) {
-          if (code.length > 1)
-            code.push(",");
-          code.push(key);
+          if (code2.length > 1)
+            code2.push(",");
+          code2.push(key);
           if (key !== value || this.opts.es5) {
-            code.push(":");
-            (0, code_1.addCodeArg)(code, value);
+            code2.push(":");
+            (0, code_1.addCodeArg)(code2, value);
           }
         }
-        code.push("}");
-        return new code_1._Code(code);
+        code2.push("}");
+        return new code_1._Code(code2);
       }
       // `if` clause (or statement if `thenBody` and, optionally, `elseBody` are passed)
       if(condition, thenBody, elseBody) {
@@ -3134,22 +3134,22 @@ var require_utils = __commonJS({
     }
     function stringArrayToHexStripped(input2) {
       let acc = "";
-      let code = 0;
+      let code2 = 0;
       let i = 0;
       for (i = 0; i < input2.length; i++) {
-        code = input2[i].charCodeAt(0);
-        if (code === 48) {
+        code2 = input2[i].charCodeAt(0);
+        if (code2 === 48) {
           continue;
         }
-        if (!(code >= 48 && code <= 57 || code >= 65 && code <= 70 || code >= 97 && code <= 102)) {
+        if (!(code2 >= 48 && code2 <= 57 || code2 >= 65 && code2 <= 70 || code2 >= 97 && code2 <= 102)) {
           return "";
         }
         acc += input2[i];
         break;
       }
       for (i += 1; i < input2.length; i++) {
-        code = input2[i].charCodeAt(0);
-        if (!(code >= 48 && code <= 57 || code >= 65 && code <= 70 || code >= 97 && code <= 102)) {
+        code2 = input2[i].charCodeAt(0);
+        if (!(code2 >= 48 && code2 <= 57 || code2 >= 65 && code2 <= 70 || code2 >= 97 && code2 <= 102)) {
           return "";
         }
         acc += input2[i];
@@ -3422,15 +3422,15 @@ var require_utils = __commonJS({
         if (isPathCharacter(ch)) {
           output2 += ch;
         } else {
-          const code = input2.charCodeAt(i);
-          if (code < 128) {
-            output2 += isEscapeSafe(code) ? ch : BYTE_HEX[code];
-          } else if (code < 55296 || code > 57343) {
-            output2 += percentEncodeNonAscii(code);
-          } else if (code <= 56319 && i + 1 < input2.length) {
+          const code2 = input2.charCodeAt(i);
+          if (code2 < 128) {
+            output2 += isEscapeSafe(code2) ? ch : BYTE_HEX[code2];
+          } else if (code2 < 55296 || code2 > 57343) {
+            output2 += percentEncodeNonAscii(code2);
+          } else if (code2 <= 56319 && i + 1 < input2.length) {
             const low = input2.charCodeAt(i + 1);
             if (low >= 56320 && low <= 57343) {
-              output2 += percentEncodeNonAscii(65536 + (code - 55296 << 10) + (low - 56320));
+              output2 += percentEncodeNonAscii(65536 + (code2 - 55296 << 10) + (low - 56320));
               i++;
             } else {
               output2 += percentEncodeNonAscii(65533);
@@ -3461,15 +3461,15 @@ var require_utils = __commonJS({
         if (isPathCharacter(ch) && (ch !== ":" || !firstSegment)) {
           output2 += ch;
         } else {
-          const code = input2.charCodeAt(i);
-          if (code < 128) {
-            output2 += BYTE_HEX[code];
-          } else if (code < 55296 || code > 57343) {
-            output2 += percentEncodeNonAscii(code);
-          } else if (code <= 56319 && i + 1 < input2.length) {
+          const code2 = input2.charCodeAt(i);
+          if (code2 < 128) {
+            output2 += BYTE_HEX[code2];
+          } else if (code2 < 55296 || code2 > 57343) {
+            output2 += percentEncodeNonAscii(code2);
+          } else if (code2 <= 56319 && i + 1 < input2.length) {
             const low = input2.charCodeAt(i + 1);
             if (low >= 56320 && low <= 57343) {
-              output2 += percentEncodeNonAscii(65536 + (code - 55296 << 10) + (low - 56320));
+              output2 += percentEncodeNonAscii(65536 + (code2 - 55296 << 10) + (low - 56320));
               i++;
             } else {
               output2 += percentEncodeNonAscii(65533);
@@ -3496,15 +3496,15 @@ var require_utils = __commonJS({
         if (isAllowed(ch)) {
           output2 += ch;
         } else {
-          const code = input2.charCodeAt(i);
-          if (code < 128) {
-            output2 += BYTE_HEX[code];
-          } else if (code < 55296 || code > 57343) {
-            output2 += percentEncodeNonAscii(code);
-          } else if (code <= 56319 && i + 1 < input2.length) {
+          const code2 = input2.charCodeAt(i);
+          if (code2 < 128) {
+            output2 += BYTE_HEX[code2];
+          } else if (code2 < 55296 || code2 > 57343) {
+            output2 += percentEncodeNonAscii(code2);
+          } else if (code2 <= 56319 && i + 1 < input2.length) {
             const low = input2.charCodeAt(i + 1);
             if (low >= 56320 && low <= 57343) {
-              output2 += percentEncodeNonAscii(65536 + (code - 55296 << 10) + (low - 56320));
+              output2 += percentEncodeNonAscii(65536 + (code2 - 55296 << 10) + (low - 56320));
               i++;
             } else {
               output2 += percentEncodeNonAscii(65533);
@@ -3549,15 +3549,15 @@ var require_utils = __commonJS({
         if (isQueryFragmentCharacter(ch)) {
           output2 += ch;
         } else {
-          const code = input2.charCodeAt(i);
-          if (code < 128) {
-            output2 += isEscapeSafe(code) ? ch : BYTE_HEX[code];
-          } else if (code < 55296 || code > 57343) {
-            output2 += percentEncodeNonAscii(code);
-          } else if (code <= 56319 && i + 1 < input2.length) {
+          const code2 = input2.charCodeAt(i);
+          if (code2 < 128) {
+            output2 += isEscapeSafe(code2) ? ch : BYTE_HEX[code2];
+          } else if (code2 < 55296 || code2 > 57343) {
+            output2 += percentEncodeNonAscii(code2);
+          } else if (code2 <= 56319 && i + 1 < input2.length) {
             const low = input2.charCodeAt(i + 1);
             if (low >= 56320 && low <= 57343) {
-              output2 += percentEncodeNonAscii(65536 + (code - 55296 << 10) + (low - 56320));
+              output2 += percentEncodeNonAscii(65536 + (code2 - 55296 << 10) + (low - 56320));
               i++;
             } else {
               output2 += percentEncodeNonAscii(65533);
@@ -6515,8 +6515,8 @@ var require_format = __commonJS({
             }
           }
           function getFormat(fmtDef) {
-            const code = fmtDef instanceof RegExp ? (0, codegen_1.regexpCode)(fmtDef) : opts.code.formats ? (0, codegen_1._)`${opts.code.formats}${(0, codegen_1.getProperty)(schema)}` : void 0;
-            const fmt = gen.scopeValue("formats", { key: schema, ref: fmtDef, code });
+            const code2 = fmtDef instanceof RegExp ? (0, codegen_1.regexpCode)(fmtDef) : opts.code.formats ? (0, codegen_1._)`${opts.code.formats}${(0, codegen_1.getProperty)(schema)}` : void 0;
+            const fmt = gen.scopeValue("formats", { key: schema, ref: fmtDef, code: code2 });
             if (typeof fmtDef == "object" && !(fmtDef instanceof RegExp)) {
               return [fmtDef.type || "string", fmtDef.validate, (0, codegen_1._)`${fmt}.validate`];
             }
@@ -13989,12 +13989,12 @@ function isIso7064Mod97(iban3) {
   let remainder = 0;
   const len = iban3.length;
   for (let i = 4; i < len; i++) {
-    const code = iban3.charCodeAt(i);
-    remainder = (code >= 65 ? remainder * 100 + (code - 55) : remainder * 10 + (code - 48)) % 97;
+    const code2 = iban3.charCodeAt(i);
+    remainder = (code2 >= 65 ? remainder * 100 + (code2 - 55) : remainder * 10 + (code2 - 48)) % 97;
   }
   for (let i = 0; i < 4; i++) {
-    const code = iban3.charCodeAt(i);
-    remainder = (code >= 65 ? remainder * 100 + (code - 55) : remainder * 10 + (code - 48)) % 97;
+    const code2 = iban3.charCodeAt(i);
+    remainder = (code2 >= 65 ? remainder * 100 + (code2 - 55) : remainder * 10 + (code2 - 48)) % 97;
   }
   return remainder === 1;
 }
@@ -23940,12 +23940,12 @@ function compileFn(schema, options) {
   doc.write(outputAccessor === null ? `return true;` : `return ${outputAccessor};`);
   const constantNames = ["INVALID", ...ctx.constants.keys()];
   const constantValues = [INVALID2, ...ctx.constants.values()];
-  const code = doc.content.join("\n");
+  const code2 = doc.content.join("\n");
   const fullCode = options?.debug ? constantNames.length > 0 ? `// Constants: ${constantNames.join(", ")}
-${code}` : code : "";
+${code2}` : code2 : "";
   const F = Function;
   const factoryCode = `return (input) => {
-${code}
+${code2}
 }`;
   let fn;
   try {
@@ -32595,23 +32595,23 @@ var ServerResultSchema = union([
   CreateTaskResultSchema
 ]);
 var McpError = class _McpError extends Error {
-  constructor(code, message, data) {
-    super(`MCP error ${code}: ${message}`);
-    this.code = code;
+  constructor(code2, message, data) {
+    super(`MCP error ${code2}: ${message}`);
+    this.code = code2;
     this.data = data;
     this.name = "McpError";
   }
   /**
    * Factory method to create the appropriate error type based on the error code and data
    */
-  static fromError(code, message, data) {
-    if (code === ErrorCode.UrlElicitationRequired && data) {
+  static fromError(code2, message, data) {
+    if (code2 === ErrorCode.UrlElicitationRequired && data) {
       const errorData = data;
       if (errorData.elicitations) {
         return new UrlElicitationRequiredError(errorData.elicitations, message);
       }
     }
-    return new _McpError(code, message, data);
+    return new _McpError(code2, message, data);
   }
 };
 var UrlElicitationRequiredError = class extends McpError {
@@ -36839,10 +36839,6 @@ function layoutHouse(map2, prev) {
   return { rooms, corridors };
 }
 
-// packages/core/src/span-key.ts
-var spanKey = (s) => `${s.traceId}/${s.spanId}`;
-var parentKey = (s) => s.parentSpanId ? `${s.traceId}/${s.parentSpanId}` : void 0;
-
 // packages/core/src/health.ts
 var DEFAULT_THRESHOLDS = { fogRatio: 2, ghostRate: 0.05, doorRate: 0.5, floodLevel: 0.6, minFogMs: 20, minLatencySamples: 8, minErrorSamples: 10, minErrors: 3 };
 var FOG_RATIO = DEFAULT_THRESHOLDS.fogRatio;
@@ -36854,26 +36850,31 @@ var severityOf = (latencyRatio, errorRate, unavailableRate, saturation = 0) => M
 function selfTimes(spans) {
   const kids = /* @__PURE__ */ new Map();
   for (const s of spans) {
-    const pk = parentKey(s);
-    if (!pk) continue;
-    const list = kids.get(pk);
-    if (list) list.push([s.startMs, s.startMs + s.durationMs]);
-    else kids.set(pk, [[s.startMs, s.startMs + s.durationMs]]);
+    if (!s.parentSpanId) continue;
+    const list = kids.get(s.parentSpanId);
+    if (list) list.push(s);
+    else kids.set(s.parentSpanId, [s]);
   }
   const out = /* @__PURE__ */ new Map();
   for (const s of spans) {
+    const all = kids.get(s.spanId);
+    const mine = all?.filter((c) => c.traceId === s.traceId);
+    if (!mine || mine.length === 0) {
+      out.set(s, s.durationMs);
+      continue;
+    }
     const end = s.startMs + s.durationMs;
-    const iv = (kids.get(spanKey(s)) ?? []).map(([a, b]) => [Math.max(a, s.startMs), Math.min(b, end)]).filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+    const iv = mine.map((c) => [Math.max(c.startMs, s.startMs), Math.min(c.startMs + c.durationMs, end)]).filter(([x, y]) => y > x).sort((p, q) => p[0] - q[0]);
     let covered = 0;
     let cur;
-    for (const [a, b] of iv) {
-      if (!cur || a > cur[1]) {
+    for (const [x, y] of iv) {
+      if (!cur || x > cur[1]) {
         if (cur) covered += cur[1] - cur[0];
-        cur = [a, b];
-      } else cur[1] = Math.max(cur[1], b);
+        cur = [x, y];
+      } else cur[1] = Math.max(cur[1], y);
     }
     if (cur) covered += cur[1] - cur[0];
-    out.set(spanKey(s), Math.max(0, s.durationMs - covered));
+    out.set(s, Math.max(0, s.durationMs - covered));
   }
   return out;
 }
@@ -36884,7 +36885,7 @@ var p95 = (xs) => {
 };
 function computeHealth(spans, map2, now, windowMs, opts = {}) {
   const t = opts.thresholds ?? DEFAULT_THRESHOLDS;
-  const self = selfTimes(spans);
+  const self = opts.self ?? selfTimes(spans);
   const own2 = /* @__PURE__ */ new Map();
   const refused = /* @__PURE__ */ new Map();
   for (const s of spans) {
@@ -36900,7 +36901,7 @@ function computeHealth(spans, map2, now, windowMs, opts = {}) {
     const reached = mine.length + unavailable;
     const learned = opts.baselines?.get(svc.id);
     const baseline = svc.baselineMs ?? (learned?.ready ? learned.p99Ms : void 0);
-    const p = p95(mine.map((s) => self.get(spanKey(s)) ?? 0));
+    const p = p95(mine.map((s) => self.get(s) ?? 0));
     const judged = mine.length >= t.minLatencySamples && baseline !== void 0;
     const latencyRatio = judged ? p / baseline : 0;
     const errorRate = mine.length ? mine.filter((s) => s.errorKind === "own").length / mine.length : 0;
@@ -36941,6 +36942,10 @@ function findSimilar(m, service, kind) {
   return [...m].filter((r) => rank(r) > 0).sort((a, b) => rank(b) - rank(a) || b.date.localeCompare(a.date))[0];
 }
 
+// packages/core/src/span-key.ts
+var spanKey = (s) => `${s.traceId}/${s.spanId}`;
+var parentKey = (s) => s.parentSpanId ? `${s.traceId}/${s.parentSpanId}` : void 0;
+
 // packages/core/src/classify.ts
 var REFUSED = /refused|unavailable|unreachable|no route|econnreset|dns|name resolution|timed? ?out connecting/i;
 function reclassifyErrors(spans) {
@@ -36955,10 +36960,17 @@ function reclassifyErrors(spans) {
 }
 
 // packages/core/src/otlp.ts
+var HEX = /^[0-9a-fA-F]+$/;
+var MAX_ID = 64;
+var MAX_NAME = 200;
+var MAX_MESSAGE = 500;
 var MAX_SPAN_MS = 7 * 24 * 36e5;
+var SAFE_NAME = /^[\p{L}\p{N}@][\p{L}\p{N} ._:@/()[\]-]*$/u;
+var SAFE_PEER = /^[\p{L}\p{N}@[][\p{L}\p{N} ._:@/()[\]-]*$/u;
 var cleanText = (v) => v.replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]+/g, " ").replace(/\s+/g, " ").trim();
 
 // packages/core/src/fix-spec.ts
+var code = (v) => `\`${cleanText(v).replace(/`/g, "")}\``;
 var PLAN = {
   latency: {
     req: (s) => `WHEN ${s} handles a request, THE service SHALL complete its own work within 2x its baseline p95.`,
@@ -36987,7 +36999,7 @@ function renderFixSpec(i) {
 > Memory: resembles ${cleanText(i.similar.id)} (${cleanText(i.similar.date)}): ${cleanText(i.similar.summary)}
 ` : "";
   return [
-    `# Fix spec: ${cleanText(i.service)} (${i.kind})`,
+    `# Fix spec: ${code(i.service)} (${i.kind})`,
     "",
     `**Root cause:** ${cleanText(i.sentence)}`,
     `**Confidence:** ${i.confidence}`,
@@ -37052,7 +37064,7 @@ function* exorcismStages(input2) {
     sentence = `${pick2.service} fails ${(h.errorRate * 100).toFixed(0)}% of requests (${evidence.length} of ${h.samples} spans, "${evidence[0]?.errorMessage ?? "error"}") in the last ${secs}s.`;
   } else {
     const self = selfTimes(spans);
-    evidence = win2.filter((s) => s.service === pick2.service).sort((a, b) => (self.get(spanKey(b)) ?? 0) - (self.get(spanKey(a)) ?? 0)).slice(0, 10);
+    evidence = win2.filter((s) => s.service === pick2.service).sort((a, b) => (self.get(b) ?? 0) - (self.get(a) ?? 0)).slice(0, 10);
     const base2 = Math.round(map2.services.find((s) => s.id === pick2.service)?.baselineMs ?? baselines?.get(pick2.service)?.p99Ms ?? 0);
     sentence = `${pick2.service} p95 self-time is ${Math.round(h.p95SelfMs)}ms against a ${base2}ms baseline (${h.latencyRatio.toFixed(1)}x) over the last ${secs}s.`;
   }
@@ -37091,6 +37103,46 @@ function diagnose(input2) {
 var GROW = 1.25;
 var LN_GROW = Math.log(GROW);
 
+// packages/core/src/sanitize.ts
+function sanitizeSpan(s) {
+  if (typeof s.service !== "string" || !s.service) return { reason: "missing service.name" };
+  if (s.service.length > MAX_NAME || !SAFE_NAME.test(s.service)) return { reason: "unsafe service name" };
+  if (typeof s.traceId !== "string" || typeof s.spanId !== "string" || s.traceId.length > MAX_ID || s.spanId.length > MAX_ID || !HEX.test(s.traceId) || !HEX.test(s.spanId)) return { reason: "bad trace or span id" };
+  if (!Number.isFinite(s.startMs) || !Number.isFinite(s.durationMs) || s.startMs < 0 || s.durationMs < 0 || s.durationMs > MAX_SPAN_MS) return { reason: "bad timestamps" };
+  const parent = s.parentSpanId !== void 0 && s.parentSpanId.length <= MAX_ID && HEX.test(s.parentSpanId) ? s.parentSpanId : void 0;
+  const peer = s.peerService !== void 0 && s.peerService.length <= MAX_NAME && SAFE_PEER.test(s.peerService) ? s.peerService : void 0;
+  const sat = s.saturation !== void 0 && Number.isFinite(s.saturation) ? Math.min(1, Math.max(0, s.saturation)) : void 0;
+  const clean = {
+    traceId: s.traceId,
+    spanId: s.spanId,
+    ...parent ? { parentSpanId: parent } : {},
+    service: s.service,
+    operation: cleanText(String(s.operation ?? "span")).slice(0, MAX_NAME) || "span",
+    startMs: s.startMs,
+    durationMs: s.durationMs,
+    status: s.status === "error" ? "error" : "ok",
+    ...s.errorKind ? { errorKind: s.errorKind } : {},
+    ...s.errorMessage !== void 0 ? { errorMessage: cleanText(String(s.errorMessage)).slice(0, MAX_MESSAGE) } : {},
+    ...peer ? { peerService: peer } : {},
+    ...sat !== void 0 ? { saturation: sat } : {}
+  };
+  return { span: clean };
+}
+function sanitizeSpans(spans) {
+  const out = [];
+  const reasons = {};
+  let rejected = 0;
+  for (const s of spans) {
+    const r = sanitizeSpan(s);
+    if ("span" in r) out.push(r.span);
+    else {
+      rejected++;
+      reasons[r.reason] = (reasons[r.reason] ?? 0) + 1;
+    }
+  }
+  return { spans: out, rejected, reasons };
+}
+
 // packages/mcp/src/runtime.ts
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -37112,7 +37164,7 @@ var JaegerTrace = external_exports.object({
 var JaegerResponse = external_exports.object({ data: external_exports.array(JaegerTrace) });
 function fromJaeger(raw) {
   const parsed = JaegerResponse.parse(raw);
-  return reclassifyErrors(parsed.data.flatMap((t) => t.spans.map((s) => {
+  return sanitizeSpans(reclassifyErrors(parsed.data.flatMap((t) => t.spans.map((s) => {
     const tag = (k) => s.tags.find((x) => x.key === k)?.value;
     const isErr = tag("error") === true || tag("otel.status_code") === "ERROR";
     const peer = tag("peer.service");
@@ -37129,7 +37181,7 @@ function fromJaeger(raw) {
       ...isErr ? { errorMessage: String(tag("error.message") ?? "error") } : {},
       ...typeof peer === "string" ? { peerService: peer } : {}
     };
-  })));
+  })))).spans;
 }
 var Services = external_exports.object({ data: external_exports.array(external_exports.string()).nullable() });
 async function getJson(url2) {
@@ -37283,7 +37335,7 @@ var DESCRIPTIONS = {
   recall_incidents: "List remembered incidents, optionally for one service."
 };
 var rt = new Runtime({ faults: parseFaults(process.env.SPECTER_FAULTS, SHOP_MAP.services.map((x) => x.id), WARMUP_MS), memoryPath: process.env.SPECTER_MEMORY ?? ".specter/memory.json", ...process.env.SPECTER_JAEGER_URL ? { jaegerUrl: process.env.SPECTER_JAEGER_URL } : {} });
-var server = new McpServer({ name: "specter-mcp", version: "0.10.4" });
+var server = new McpServer({ name: "specter-mcp", version: "0.11.0" });
 for (const name of Object.keys(schemas)) {
   server.registerTool(name, { description: DESCRIPTIONS[name], inputSchema: schemas[name] }, async (args) => {
     try {
