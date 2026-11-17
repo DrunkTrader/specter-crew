@@ -36844,7 +36844,7 @@ var spanKey = (s) => `${s.traceId}/${s.spanId}`;
 var parentKey = (s) => s.parentSpanId ? `${s.traceId}/${s.parentSpanId}` : void 0;
 
 // packages/core/src/health.ts
-var DEFAULT_THRESHOLDS = { fogRatio: 2, ghostRate: 0.05, doorRate: 0.5, floodLevel: 0.6, minFogMs: 20, minLatencySamples: 8 };
+var DEFAULT_THRESHOLDS = { fogRatio: 2, ghostRate: 0.05, doorRate: 0.5, floodLevel: 0.6, minFogMs: 20, minLatencySamples: 8, minErrorSamples: 10, minErrors: 3 };
 var FOG_RATIO = DEFAULT_THRESHOLDS.fogRatio;
 var GHOST_RATE = DEFAULT_THRESHOLDS.ghostRate;
 var DOOR_RATE = DEFAULT_THRESHOLDS.doorRate;
@@ -36907,16 +36907,23 @@ function computeHealth(spans, map2, now, windowMs, opts = {}) {
     const unavailableRate = reached ? unavailable / reached : 0;
     const saturation = mine.length ? mine.reduce((sum, s) => sum + (s.saturation ?? 0), 0) / mine.length : 0;
     const severity = severityOf(latencyRatio, errorRate, unavailableRate, saturation);
-    const isHaunted = latencyRatio >= t.fogRatio && p >= t.minFogMs || errorRate >= t.ghostRate || unavailableRate >= t.doorRate || saturation >= t.floodLevel;
+    const isHaunted = latencyRatio >= t.fogRatio && p >= t.minFogMs || ghostOn(mine.length, errorRate, t) || unavailableRate >= t.doorRate || saturation >= t.floodLevel;
     const state = reached === 0 ? "quiet" : isHaunted ? "haunted" : baseline === void 0 ? "learning" : "calm";
     return { service: svc.id, samples: mine.length, p95SelfMs: p, latencyRatio, errorRate, unavailableRate, saturation, severity, state };
   });
+}
+var ghostOn = (samples, errorRate, t) => samples >= t.minErrorSamples && errorRate * samples >= t.minErrors - 1e-9 && wilsonLower(errorRate * samples, samples) >= t.ghostRate;
+function wilsonLower(failures, n, z2 = 1.645) {
+  if (n <= 0) return 0;
+  const p = failures / n;
+  const z22 = z2 * z2;
+  return Math.max(0, (p + z22 / (2 * n) - z2 * Math.sqrt(p * (1 - p) / n + z22 / (4 * n * n))) / (1 + z22 / n));
 }
 function apparitions(health, t = DEFAULT_THRESHOLDS) {
   const out = [];
   for (const h of health) {
     if (h.unavailableRate >= t.doorRate) out.push({ id: `locked-door:${h.service}`, kind: "locked-door", service: h.service, severity: clamp012(h.unavailableRate / 0.9) });
-    if (h.errorRate >= t.ghostRate) out.push({ id: `ghost:${h.service}`, kind: "ghost", service: h.service, severity: clamp012(h.errorRate / 0.5) });
+    if (ghostOn(h.samples, h.errorRate, t)) out.push({ id: `ghost:${h.service}`, kind: "ghost", service: h.service, severity: clamp012(h.errorRate / 0.5) });
     if (h.saturation >= t.floodLevel) out.push({ id: `flood:${h.service}`, kind: "flood", service: h.service, severity: clamp012((h.saturation - 0.5) / 0.4) });
     if (h.latencyRatio >= t.fogRatio && h.p95SelfMs >= t.minFogMs) out.push({ id: `fog:${h.service}`, kind: "fog", service: h.service, severity: clamp012((h.latencyRatio - 1.5) / 4.5) });
   }
@@ -36933,6 +36940,23 @@ function findSimilar(m, service, kind) {
   const rank = (r) => r.service === service && r.kind === kind ? 2 : r.kind === kind ? 1 : 0;
   return [...m].filter((r) => rank(r) > 0).sort((a, b) => rank(b) - rank(a) || b.date.localeCompare(a.date))[0];
 }
+
+// packages/core/src/classify.ts
+var REFUSED = /refused|unavailable|unreachable|no route|econnreset|dns|name resolution|timed? ?out connecting/i;
+function reclassifyErrors(spans) {
+  const failingParents = new Set(spans.filter((s) => s.status === "error").map(parentKey).filter((k) => k !== void 0));
+  return spans.map((s) => {
+    if (s.status !== "error") return s;
+    const refused = REFUSED.test(s.errorMessage ?? "") && Boolean(s.peerService);
+    if (refused) return { ...s, errorKind: "unavailable" };
+    if (failingParents.has(spanKey(s))) return { ...s, errorKind: "upstream" };
+    return { ...s, errorKind: "own" };
+  });
+}
+
+// packages/core/src/otlp.ts
+var MAX_SPAN_MS = 7 * 24 * 36e5;
+var cleanText = (v) => v.replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]+/g, " ").replace(/\s+/g, " ").trim();
 
 // packages/core/src/fix-spec.ts
 var PLAN = {
@@ -36960,12 +36984,12 @@ var PLAN = {
 function renderFixSpec(i) {
   const p = PLAN[i.kind];
   const memo2 = i.similar ? `
-> Memory: resembles ${i.similar.id} (${i.similar.date}): ${i.similar.summary}
+> Memory: resembles ${cleanText(i.similar.id)} (${cleanText(i.similar.date)}): ${cleanText(i.similar.summary)}
 ` : "";
   return [
-    `# Fix spec: ${i.service} (${i.kind})`,
+    `# Fix spec: ${cleanText(i.service)} (${i.kind})`,
     "",
-    `**Root cause:** ${i.sentence}`,
+    `**Root cause:** ${cleanText(i.sentence)}`,
     `**Confidence:** ${i.confidence}`,
     `**Evidence:** ${i.evidenceTraceIds.map((t) => `\`${t}\``).join(", ") || "none"}`,
     memo2,
@@ -37062,22 +37086,6 @@ function diagnose(input2) {
     if (r.done) return r.value;
   }
 }
-
-// packages/core/src/classify.ts
-var REFUSED = /refused|unavailable|unreachable|no route|econnreset|dns|name resolution|timed? ?out connecting/i;
-function reclassifyErrors(spans) {
-  const failingParents = new Set(spans.filter((s) => s.status === "error").map(parentKey).filter((k) => k !== void 0));
-  return spans.map((s) => {
-    if (s.status !== "error") return s;
-    const refused = REFUSED.test(s.errorMessage ?? "") && Boolean(s.peerService);
-    if (refused) return { ...s, errorKind: "unavailable" };
-    if (failingParents.has(spanKey(s))) return { ...s, errorKind: "upstream" };
-    return { ...s, errorKind: "own" };
-  });
-}
-
-// packages/core/src/otlp.ts
-var MAX_SPAN_MS = 7 * 24 * 36e5;
 
 // packages/core/src/baseline.ts
 var GROW = 1.25;
@@ -37275,7 +37283,7 @@ var DESCRIPTIONS = {
   recall_incidents: "List remembered incidents, optionally for one service."
 };
 var rt = new Runtime({ faults: parseFaults(process.env.SPECTER_FAULTS, SHOP_MAP.services.map((x) => x.id), WARMUP_MS), memoryPath: process.env.SPECTER_MEMORY ?? ".specter/memory.json", ...process.env.SPECTER_JAEGER_URL ? { jaegerUrl: process.env.SPECTER_JAEGER_URL } : {} });
-var server = new McpServer({ name: "specter-mcp", version: "0.10.3" });
+var server = new McpServer({ name: "specter-mcp", version: "0.10.4" });
 for (const name of Object.keys(schemas)) {
   server.registerTool(name, { description: DESCRIPTIONS[name], inputSchema: schemas[name] }, async (args) => {
     try {
