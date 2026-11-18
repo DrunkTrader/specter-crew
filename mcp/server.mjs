@@ -37881,5 +37881,5 @@ function buildServer(port, version2) {
 }
 
 // packages/mcp/src/server.ts
-var server = buildServer(selectPort(process.env), "0.16.0");
+var server = buildServer(selectPort(process.env), "0.17.0");
 await server.connect(new StdioServerTransport());
