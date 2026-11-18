@@ -37124,6 +37124,9 @@ function diagnose(input2) {
   }
 }
 
+// packages/core/src/incident.ts
+var INCIDENT_GAP_MS = 10 * 6e4;
+
 // packages/core/src/peers.ts
 var SUFFIX = /(services?|svc|api|server|grpc|client)$/;
 function nameKey(hint) {
@@ -37878,5 +37881,5 @@ function buildServer(port, version2) {
 }
 
 // packages/mcp/src/server.ts
-var server = buildServer(selectPort(process.env), "0.14.0");
+var server = buildServer(selectPort(process.env), "0.15.0");
 await server.connect(new StdioServerTransport());
