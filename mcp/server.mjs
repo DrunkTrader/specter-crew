@@ -36840,7 +36840,7 @@ function layoutHouse(map2, prev) {
 }
 
 // packages/core/src/health.ts
-var DEFAULT_THRESHOLDS = { fogRatio: 2, ghostRate: 0.05, doorRate: 0.5, floodLevel: 0.6, minFogMs: 20, minLatencySamples: 8, minErrorSamples: 10, minErrors: 3 };
+var DEFAULT_THRESHOLDS = { fogRatio: 2, ghostRate: 0.05, doorRate: 0.5, floodLevel: 0.6, minFogMs: 20, minLatencySamples: 8, minErrorSamples: 10, minErrors: 3, minSparseSamples: 3, sparseGhostLower: 0.3, minSlowSpans: 3 };
 var FOG_RATIO = DEFAULT_THRESHOLDS.fogRatio;
 var GHOST_RATE = DEFAULT_THRESHOLDS.ghostRate;
 var DOOR_RATE = DEFAULT_THRESHOLDS.doorRate;
@@ -36901,19 +36901,27 @@ function computeHealth(spans, map2, now, windowMs, opts = {}) {
     const reached = mine.length + unavailable;
     const learned = opts.baselines?.get(svc.id);
     const baseline = svc.baselineMs ?? (learned?.ready ? learned.p99Ms : void 0);
-    const p = p95(mine.map((s) => self.get(s) ?? 0));
-    const judged = mine.length >= t.minLatencySamples && baseline !== void 0;
+    const done = mine.filter((s) => s.startMs + s.durationMs <= now);
+    const p = p95(done.map((s) => self.get(s) ?? 0));
+    const judged = done.length >= t.minLatencySamples && baseline !== void 0;
     const latencyRatio = judged ? p / baseline : 0;
+    const slowLine = judged ? Math.max(t.fogRatio * baseline, t.minFogMs) : Infinity;
+    const slowSpans = judged ? done.reduce((n, s) => n + ((self.get(s) ?? 0) >= slowLine ? 1 : 0), 0) : 0;
     const errorRate = mine.length ? mine.filter((s) => s.errorKind === "own").length / mine.length : 0;
     const unavailableRate = reached ? unavailable / reached : 0;
     const saturation = mine.length ? mine.reduce((sum, s) => sum + (s.saturation ?? 0), 0) / mine.length : 0;
     const severity = severityOf(latencyRatio, errorRate, unavailableRate, saturation);
-    const isHaunted = latencyRatio >= t.fogRatio && p >= t.minFogMs || ghostOn(mine.length, errorRate, t) || unavailableRate >= t.doorRate || saturation >= t.floodLevel;
+    const isHaunted = latencyRatio >= t.fogRatio && p >= t.minFogMs && slowSpans >= t.minSlowSpans || ghostOn(mine.length, errorRate, t) || unavailableRate >= t.doorRate || saturation >= t.floodLevel;
     const state = reached === 0 ? "quiet" : isHaunted ? "haunted" : baseline === void 0 ? "learning" : "calm";
-    return { service: svc.id, samples: mine.length, p95SelfMs: p, latencyRatio, errorRate, unavailableRate, saturation, severity, state };
+    return { service: svc.id, samples: mine.length, p95SelfMs: p, latencyRatio, slowSpans, errorRate, unavailableRate, saturation, severity, state };
   });
 }
-var ghostOn = (samples, errorRate, t) => samples >= t.minErrorSamples && errorRate * samples >= t.minErrors - 1e-9 && wilsonLower(errorRate * samples, samples) >= t.ghostRate;
+var ghostOn = (samples, errorRate, t) => {
+  const failures = errorRate * samples;
+  if (failures < t.minErrors - 1e-9) return false;
+  const lower = wilsonLower(failures, samples);
+  return samples >= t.minErrorSamples ? lower >= t.ghostRate : samples >= t.minSparseSamples && lower >= t.sparseGhostLower;
+};
 function wilsonLower(failures, n, z2 = 1.645) {
   if (n <= 0) return 0;
   const p = failures / n;
@@ -36926,7 +36934,7 @@ function apparitions(health, t = DEFAULT_THRESHOLDS) {
     if (h.unavailableRate >= t.doorRate) out.push({ id: `locked-door:${h.service}`, kind: "locked-door", service: h.service, severity: clamp012(h.unavailableRate / 0.9) });
     if (ghostOn(h.samples, h.errorRate, t)) out.push({ id: `ghost:${h.service}`, kind: "ghost", service: h.service, severity: clamp012(h.errorRate / 0.5) });
     if (h.saturation >= t.floodLevel) out.push({ id: `flood:${h.service}`, kind: "flood", service: h.service, severity: clamp012((h.saturation - 0.5) / 0.4) });
-    if (h.latencyRatio >= t.fogRatio && h.p95SelfMs >= t.minFogMs) out.push({ id: `fog:${h.service}`, kind: "fog", service: h.service, severity: clamp012((h.latencyRatio - 1.5) / 4.5) });
+    if (h.latencyRatio >= t.fogRatio && h.p95SelfMs >= t.minFogMs && (h.slowSpans ?? t.minSlowSpans) >= t.minSlowSpans) out.push({ id: `fog:${h.service}`, kind: "fog", service: h.service, severity: clamp012((h.latencyRatio - 1.5) / 4.5) });
   }
   return out;
 }
@@ -37003,7 +37011,7 @@ function renderFixSpec(i) {
     `# Fix spec: ${code(i.service)} (${i.kind})`,
     "",
     `**Root cause:** ${mdEscape(i.sentence)}`,
-    `**Confidence:** ${i.confidence}`,
+    `**Confidence:** ${i.confidence}${i.caveat ? ` (${mdEscape(i.caveat)})` : ""}`,
     `**Evidence:** ${i.evidenceTraceIds.map((t) => code(t)).join(", ") || "none"}`,
     memo2,
     "## Requirements",
@@ -37019,6 +37027,7 @@ function renderFixSpec(i) {
 }
 
 // packages/core/src/diagnose.ts
+var MIN_HIGH_SAMPLES = 20;
 var KIND = { fog: "latency", ghost: "errors", "locked-door": "down", flood: "saturation" };
 var SPOOK = {
   latency: "Something heavy is dragging its feet in there.",
@@ -37074,21 +37083,21 @@ function* exorcismStages(input2) {
   yield { name: "Correlating spans", detail: `${pick2.service} is the source; ${affected.length} other service${affected.length === 1 ? "" : "s"} affected` };
   const similar = findSimilar(memory, pick2.service, kind);
   yield { name: "Searching memory", detail: similar ? `matched ${similar.id} (${similar.date})` : "no similar incident" };
-  let confidence = h.samples + evidence.length >= 20 && pick2.severity >= 0.3 ? "high" : evidence.length >= 5 ? "medium" : "low";
+  let confidence = h.samples >= MIN_HIGH_SAMPLES && pick2.severity >= 0.3 ? "high" : evidence.length >= 5 ? "medium" : "low";
   const caveats = [];
   if (h.samples < 10) {
     confidence = "low";
     caveats.push(`only ${h.samples} samples for ${pick2.service}`);
-  }
+  } else if (h.samples < MIN_HIGH_SAMPLES) caveats.push(`only ${h.samples} samples for ${pick2.service}`);
   const rival = all.find((a) => a.service !== pick2.service && !affected.includes(a.service) && a.severity >= 0.8 * pick2.severity);
   if (rival) {
     if (confidence === "high") confidence = "medium";
     caveats.push(`${rival.service} is also haunted (${rival.kind}) at similar severity`);
   }
-  const caveat = caveats.length ? caveats.join("; ") : void 0;
+  const caveat = caveats.length ? `Weak evidence: ${caveats.join("; ")}.` : void 0;
   const full = `${sentence} ${SPOOK[kind]}`;
   const base = { service: pick2.service, kind, sentence: full, confidence, ...caveat ? { caveat } : {}, evidenceTraceIds: traceIds, affected, ...similar ? { similar } : {} };
-  const fixSpec = renderFixSpec({ ...base, similar });
+  const fixSpec = renderFixSpec({ ...base, caveat, similar });
   yield { name: "Writing fix spec", detail: `${fixSpec.split("\n").length} lines` };
   return { ...base, fixSpec };
 }
@@ -37112,6 +37121,7 @@ function sanitizeSpan(s) {
   if (!Number.isFinite(s.startMs) || !Number.isFinite(s.durationMs) || s.startMs < 0 || s.durationMs < 0 || s.durationMs > MAX_SPAN_MS) return { reason: "bad timestamps" };
   const parent = s.parentSpanId !== void 0 && s.parentSpanId.length <= MAX_ID && HEX.test(s.parentSpanId) ? s.parentSpanId : void 0;
   const peer = s.peerService !== void 0 && s.peerService.length <= MAX_NAME && SAFE_PEER.test(s.peerService) ? s.peerService : void 0;
+  const hint = s.calleeHint !== void 0 && s.calleeHint.length <= MAX_NAME && SAFE_PEER.test(s.calleeHint) ? s.calleeHint : void 0;
   const sat = s.saturation !== void 0 && Number.isFinite(s.saturation) ? Math.min(1, Math.max(0, s.saturation)) : void 0;
   const clean = {
     traceId: s.traceId,
@@ -37125,6 +37135,7 @@ function sanitizeSpan(s) {
     ...s.errorKind ? { errorKind: s.errorKind } : {},
     ...s.errorMessage !== void 0 ? { errorMessage: cleanText(String(s.errorMessage)).slice(0, MAX_MESSAGE) } : {},
     ...peer ? { peerService: peer } : {},
+    ...hint ? { calleeHint: hint } : {},
     ...sat !== void 0 ? { saturation: sat } : {}
   };
   return { span: clean };
@@ -37336,7 +37347,7 @@ var DESCRIPTIONS = {
   recall_incidents: "List remembered incidents, optionally for one service."
 };
 var rt = new Runtime({ faults: parseFaults(process.env.SPECTER_FAULTS, SHOP_MAP.services.map((x) => x.id), WARMUP_MS), memoryPath: process.env.SPECTER_MEMORY ?? ".specter/memory.json", ...process.env.SPECTER_JAEGER_URL ? { jaegerUrl: process.env.SPECTER_JAEGER_URL } : {} });
-var server = new McpServer({ name: "specter-mcp", version: "0.12.1" });
+var server = new McpServer({ name: "specter-mcp", version: "0.13.0" });
 for (const name of Object.keys(schemas)) {
   server.registerTool(name, { description: DESCRIPTIONS[name], inputSchema: schemas[name] }, async (args) => {
     try {
